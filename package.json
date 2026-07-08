@@ -1,0 +1,40 @@
+{
+  "name": "jposta",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JPosta commercial business email hosting platform monorepo.",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "turbo build",
+    "dev": "node scripts/dev-banner.mjs all && turbo dev --parallel --filter=@jposta/web --filter=@jposta/admin --filter=@jposta/api --filter=@jposta/ui --filter=@jposta/types",
+    "dev:web": "node scripts/dev-banner.mjs web && turbo dev --parallel --filter=@jposta/web",
+    "dev:admin": "node scripts/dev-banner.mjs admin && turbo dev --parallel --filter=@jposta/admin",
+    "dev:api": "node scripts/dev-banner.mjs api && turbo dev --parallel --filter=@jposta/api",
+    "dev:workspace": "node scripts/dev-banner.mjs workspace && turbo dev --parallel --filter=@jposta/web --filter=@jposta/admin",
+    "dev:all": "node scripts/dev-banner.mjs all && turbo dev --parallel --filter=@jposta/web --filter=@jposta/admin --filter=@jposta/api --filter=@jposta/ui --filter=@jposta/types",
+    "check": "pnpm lint && pnpm typecheck",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@jposta/config": "workspace:*",
+    "eslint": "9.18.0",
+    "husky": "9.1.7",
+    "lint-staged": "15.3.0",
+    "pnpm": "9.15.4",
+    "prettier": "3.4.2",
+    "turbo": "2.3.3",
+    "typescript": "5.7.3"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx,json,md,css}": [
+      "prettier --write"
+    ],
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix"
+    ]
+  }
+}

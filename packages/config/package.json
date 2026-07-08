@@ -1,0 +1,31 @@
+{
+  "name": "@jposta/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint/base": "./eslint/base.mjs",
+    "./eslint/next": "./eslint/next.mjs",
+    "./prettier": "./prettier/index.cjs",
+    "./tailwind/preset": "./tailwind/preset.ts",
+    "./tsconfig/base": "./tsconfig/base.json",
+    "./tsconfig/next": "./tsconfig/next.json",
+    "./tsconfig/node": "./tsconfig/node.json",
+    "./tsconfig/react-library": "./tsconfig/react-library.json"
+  },
+  "peerDependencies": {
+    "eslint": ">=9.0.0 <10",
+    "prettier": ">=3.0.0 <4",
+    "tailwindcss": ">=3.4.0 <4",
+    "typescript": ">=5.7.0 <6"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.18.0",
+    "@next/eslint-plugin-next": "15.1.4",
+    "eslint-config-prettier": "9.1.0",
+    "eslint-plugin-react": "7.37.3",
+    "eslint-plugin-react-hooks": "5.1.0",
+    "globals": "15.14.0",
+    "typescript-eslint": "8.20.0"
+  }
+}
