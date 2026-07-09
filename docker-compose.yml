@@ -3,6 +3,8 @@ services:
     image: postgres:16
     container_name: jposta-postgres
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     env_file:
       - .env
     environment:
@@ -28,7 +30,7 @@ services:
 
   api:
     build:
-      context: ./services/app
+      context: .
       dockerfile: apps/api/Dockerfile
     container_name: jposta-api
     restart: unless-stopped
@@ -44,7 +46,7 @@ services:
 
   web:
     build:
-      context: ./services/app
+      context: .
       dockerfile: apps/web/Dockerfile
     container_name: jposta-web
     restart: unless-stopped
@@ -59,7 +61,7 @@ services:
 
   admin:
     build:
-      context: ./services/app
+      context: .
       dockerfile: apps/admin/Dockerfile
     container_name: jposta-admin
     restart: unless-stopped

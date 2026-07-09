@@ -10,6 +10,10 @@ async function bootstrap() {
     bufferLogs: true,
   });
 
+  app.enableCors({
+    origin: env.webOrigin,
+    credentials: true,
+  });
   app.enableShutdownHooks();
 
   await app.listen(env.port);

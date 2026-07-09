@@ -15,4 +15,5 @@ RUN pnpm --filter @jposta/api build
 
 EXPOSE 4000
 
-CMD ["pnpm", "--filter", "@jposta/api", "start"]
+CMD ["sh", "-c", "pnpm --filter @jposta/api prisma:deploy && pnpm --filter @jposta/api start"]
+
