@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: jposta-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ./database:/var/lib/postgresql/data
+    networks:
+      - jposta-network
+
+  redis:
+    image: redis:7
+    container_name: jposta-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    env_file:
+      - .env
+    volumes:
+      - ./redis:/data
+    networks:
+      - jposta-network
+
+  api:
+    build:
+      context: ./services/app
+      dockerfile: apps/api/Dockerfile
+    container_name: jposta-api
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - jposta-network
+
+  web:
+    build:
+      context: ./services/app
+      dockerfile: apps/web/Dockerfile
+    container_name: jposta-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - api
+    networks:
+      - jposta-network
+
+  admin:
+    build:
+      context: ./services/app
+      dockerfile: apps/admin/Dockerfile
+    container_name: jposta-admin
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    depends_on:
+      - api
+    networks:
+      - jposta-network
+
+networks:
+  jposta-network:
+    driver: bridge
