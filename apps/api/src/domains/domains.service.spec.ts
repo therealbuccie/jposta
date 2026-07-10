@@ -18,7 +18,16 @@ describe("DomainsService ownership", () => {
     );
 
     await assert.rejects(
-      () => service.getById("domain-id", { id: "user-id", email: "a@b.com", name: "User" }),
+      () =>
+        service.getById("domain-id", {
+          id: "user-id",
+          email: "a@b.com",
+          name: "User",
+          primaryEmail: "a@b.com",
+          role: "USER",
+          status: "ACTIVE",
+          username: "a",
+        }),
       NotFoundException,
     );
   });

@@ -147,7 +147,7 @@ export function BusinessWorkspaceClient() {
       searchPlaceholder="Search company mail, domains, contacts..."
       shellDescription="Business Workspace"
       shellTitle={organization?.name ?? "JPosta"}
-      userEmail={session?.user.email ?? "owner@company.com"}
+      userEmail={session?.user.primaryEmail ?? session?.user.email ?? "owner@company.com"}
       userName={session?.user.name ?? "Workspace Admin"}
       workspace={organization?.name ?? "Business Workspace"}
       workspaceLabel="Business Workspace"

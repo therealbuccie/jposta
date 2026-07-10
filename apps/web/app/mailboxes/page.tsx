@@ -198,7 +198,7 @@ export default function MailboxesPage() {
       searchPlaceholder="Search mailboxes..."
       shellDescription="Business Workspace"
       shellTitle={organization?.name ?? "JPosta"}
-      userEmail={session?.user.email ?? "owner@company.com"}
+      userEmail={session?.user.primaryEmail ?? session?.user.email ?? "owner@company.com"}
       userName={session?.user.name ?? "Workspace Admin"}
       workspace={organization?.name ?? "Business Workspace"}
       workspaceLabel="Mailboxes"
@@ -297,7 +297,12 @@ function MailboxRow({
             <p className="mt-1 text-xs text-rose-500">{mailbox.provisioningError}</p>
           ) : null}
         </div>
-        <StatusBadge status={mailbox.status} />
+        <div className="flex flex-wrap gap-2">
+          <GlassBadge tone={mailbox.type === "PERSONAL" ? "premium" : "neutral"}>
+            {mailbox.type}
+          </GlassBadge>
+          <StatusBadge status={mailbox.status} />
+        </div>
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <GlassButton size="sm" onClick={onResetPassword}>

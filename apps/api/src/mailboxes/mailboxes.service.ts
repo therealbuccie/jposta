@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { DomainStatus, MailboxStatus } from "@prisma/client";
+import { DomainStatus, MailboxStatus, MailboxType } from "@prisma/client";
 
 import type { AuthenticatedUser } from "../auth/auth.types";
 import { MailProvisioningService } from "../mail-provisioning/mail-provisioning.service";
@@ -37,20 +37,21 @@ export class MailboxesService {
   async list(user: AuthenticatedUser) {
     return this.prisma.mailbox.findMany({
       where: {
-        organization: {
-          ownerId: user.id,
-        },
-      },
-      orderBy: { createdAt: "desc" },
-      include: {
-        domain: true,
-        organization: {
-          select: {
-            id: true,
-            name: true,
+        OR: [
+          {
+            userId: user.id,
+            type: MailboxType.PERSONAL,
           },
-        },
+          {
+            organization: {
+              ownerId: user.id,
+            },
+            type: MailboxType.BUSINESS,
+          },
+        ],
       },
+      orderBy: [{ type: "asc" }, { createdAt: "desc" }],
+      include: mailboxInclude,
     });
   }
 
@@ -90,6 +91,7 @@ export class MailboxesService {
       data: {
         address,
         displayName,
+        type: MailboxType.BUSINESS,
         status: MailboxStatus.PROVISIONING,
         quotaMb,
         organizationId: organization.id,
@@ -160,9 +162,18 @@ export class MailboxesService {
     const mailbox = await this.prisma.mailbox.findFirst({
       where: {
         id,
-        organization: {
-          ownerId: userId,
-        },
+        OR: [
+          {
+            userId,
+            type: MailboxType.PERSONAL,
+          },
+          {
+            organization: {
+              ownerId: userId,
+            },
+            type: MailboxType.BUSINESS,
+          },
+        ],
       },
     });
 
@@ -187,6 +198,8 @@ const mailboxInclude = {
       id: true,
       email: true,
       name: true,
+      primaryEmail: true,
+      username: true,
     },
   },
 } as const;

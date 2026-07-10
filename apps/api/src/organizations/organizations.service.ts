@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { UserRole } from "@prisma/client";
 
-import { PrismaService } from "../prisma/prisma.service";
 import type { AuthenticatedUser } from "../auth/auth.types";
+import { PrismaService } from "../prisma/prisma.service";
 
 type CreateOrganizationInput = {
   name?: string;
@@ -23,16 +24,30 @@ export class OrganizationsService {
     const name = requireText(input.name, "name");
     const slug = toSlug(input.slug || name);
 
-    return this.prisma.organization.create({
-      data: {
-        name,
-        slug,
-        ownerId: user.id,
-      },
-      include: {
-        domains: true,
-        mailboxes: true,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.create({
+        data: {
+          name,
+          slug,
+          ownerId: user.id,
+        },
+        include: {
+          domains: true,
+          mailboxes: true,
+        },
+      });
+
+      await tx.user.updateMany({
+        where: {
+          id: user.id,
+          role: UserRole.USER,
+        },
+        data: {
+          role: UserRole.WORKSPACE_OWNER,
+        },
+      });
+
+      return organization;
     });
   }
 

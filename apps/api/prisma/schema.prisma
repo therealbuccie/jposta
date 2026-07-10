@@ -8,14 +8,22 @@ datasource db {
 }
 
 model User {
-  id                 String         @id @default(cuid())
-  email              String         @unique
-  name               String
-  passwordHash       String
-  ownedOrganizations Organization[] @relation("OrganizationOwner")
-  mailboxes          Mailbox[]
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  id                      String         @id @default(cuid())
+  email                   String         @unique
+  username                String         @unique
+  primaryEmail            String         @unique
+  recoveryEmail           String?
+  recoveryEmailVerifiedAt DateTime?
+  status                  UserStatus     @default(PENDING_PROVISIONING)
+  role                    UserRole       @default(USER)
+  name                    String
+  passwordHash            String
+  personalMailboxId       String?        @unique
+  personalMailbox         Mailbox?       @relation("UserPersonalMailbox", fields: [personalMailboxId], references: [id], onDelete: SetNull)
+  ownedOrganizations      Organization[] @relation("OrganizationOwner")
+  mailboxes               Mailbox[]      @relation("MailboxUser")
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
 }
 
 model Organization {
@@ -52,17 +60,35 @@ model Mailbox {
   id                String        @id @default(cuid())
   address           String        @unique
   displayName       String
+  type              MailboxType   @default(BUSINESS)
   status            MailboxStatus @default(PENDING)
   provisioningError String?
   quotaMb           Int           @default(5120)
-  organizationId    String
-  domainId          String
+  organizationId    String?
+  domainId          String?
   userId            String?
-  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  domain            Domain        @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  user              User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  personalUser      User?         @relation("UserPersonalMailbox")
+  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  domain            Domain?       @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  user              User?         @relation("MailboxUser", fields: [userId], references: [id], onDelete: SetNull)
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
+}
+
+enum UserStatus {
+  PENDING_PROVISIONING
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  FAILED
+}
+
+enum UserRole {
+  USER
+  WORKSPACE_OWNER
+  WORKSPACE_ADMIN
+  PLATFORM_ADMIN
+  SUPPORT_AGENT
 }
 
 enum DomainStatus {
@@ -79,4 +105,9 @@ enum MailboxStatus {
   ACTIVE
   FAILED
   SUSPENDED
+}
+
+enum MailboxType {
+  PERSONAL
+  BUSINESS
 }

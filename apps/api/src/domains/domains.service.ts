@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { DomainStatus } from "@prisma/client";
 
 import type { AuthenticatedUser } from "../auth/auth.types";
+import { platformDomain } from "../auth/username.utils";
 import { OrganizationsService } from "../organizations/organizations.service";
 import { PrismaService } from "../prisma/prisma.service";
 import {

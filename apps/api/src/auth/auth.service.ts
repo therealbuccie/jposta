@@ -2,77 +2,202 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
+import { MailboxStatus, MailboxType, UserRole, UserStatus } from "@prisma/client";
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 
+import { MailProvisioningService } from "../mail-provisioning/mail-provisioning.service";
 import { env } from "../config/env";
 import { PrismaService } from "../prisma/prisma.service";
 import type { AuthenticatedUser } from "./auth.types";
+import { FixedWindowRateLimiter } from "./rate-limit";
+import {
+  normalizeLoginIdentifier,
+  normalizeOptionalRecoveryEmail,
+  normalizeUsername,
+  platformDomain,
+  primaryEmailForUsername,
+  usernameSuggestions,
+} from "./username.utils";
 
 const scrypt = promisify(scryptCallback);
 const tokenTtlSeconds = 60 * 60 * 24 * 7;
+const authLimiter = new FixedWindowRateLimiter(12, 60_000, "authentication");
+const availabilityLimiter = new FixedWindowRateLimiter(60, 60_000, "username availability");
 
 type RegisterInput = {
-  email?: string;
-  name?: string;
+  confirmPassword?: string;
+  fullName?: string;
   password?: string;
+  recoveryEmail?: string;
+  username?: string;
 };
 
 type LoginInput = {
-  email?: string;
+  identifier?: string;
   password?: string;
 };
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mailProvisioningService: MailProvisioningService,
+  ) {}
 
-  async register(input: RegisterInput) {
-    const email = normalizeEmail(input.email);
-    const name = requireText(input.name, "name");
-    const password = requirePassword(input.password);
-    const existingUser = await this.prisma.user.findUnique({ where: { email } });
+  async usernameAvailability(usernameValue: string | undefined, rateLimitKey = "anonymous") {
+    availabilityLimiter.check(rateLimitKey);
+    const normalizedUsername = normalizeUsername(usernameValue);
+    const email = primaryEmailForUsername(normalizedUsername);
+    const unavailableUsernames = new Set<string>();
+    const existing = await this.prisma.user.findFirst({
+      where: {
+        OR: [{ username: normalizedUsername }, { primaryEmail: email }, { email }],
+      },
+      select: { username: true },
+    });
 
-    if (existingUser) {
-      throw new ConflictException("A user with this email already exists.");
+    if (existing?.username) {
+      unavailableUsernames.add(existing.username);
     }
 
+    const available = !existing;
+
+    return {
+      normalizedUsername,
+      email,
+      available,
+      suggestions: available ? [] : usernameSuggestions(normalizedUsername, unavailableUsernames),
+    };
+  }
+
+  async register(input: RegisterInput, rateLimitKey = "anonymous") {
+    authLimiter.check(`register:${rateLimitKey}`);
+    const fullName = requireText(input.fullName, "fullName");
+    const username = normalizeUsername(input.username);
+    const primaryEmail = primaryEmailForUsername(username);
+    const recoveryEmail = normalizeOptionalRecoveryEmail(input.recoveryEmail, primaryEmail);
+    const password = requireStrongPassword(input.password);
+
+    if (password !== input.confirmPassword) {
+      throw new BadRequestException("Passwords do not match.");
+    }
+
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        OR: [{ username }, { primaryEmail }, { email: primaryEmail }],
+      },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      throw new ConflictException("This JPosta username is already taken.");
+    }
+
+    const passwordHash = await hashPassword(password);
     const user = await this.prisma.user.create({
       data: {
-        email,
-        name,
-        passwordHash: await hashPassword(password),
+        email: primaryEmail,
+        username,
+        primaryEmail,
+        recoveryEmail,
+        name: fullName,
+        passwordHash,
+        status: UserStatus.PENDING_PROVISIONING,
+        role: UserRole.USER,
       },
       select: userSelect,
     });
 
-    return {
-      user,
-      token: this.signToken(user),
-    };
+    const mailbox = await this.prisma.mailbox.create({
+      data: {
+        address: primaryEmail,
+        displayName: fullName,
+        type: MailboxType.PERSONAL,
+        status: MailboxStatus.PROVISIONING,
+        quotaMb: 5120,
+        userId: user.id,
+      },
+    });
+
+    try {
+      // MVP note: the account password and initial mailbox password are intentionally sourced
+      // from the same secret here, but they are logically separate credentials and should be
+      // split into independent password flows before production-grade mailbox access ships.
+      await this.mailProvisioningService.createMailbox({
+        address: primaryEmail,
+        password,
+        quotaMb: mailbox.quotaMb,
+      });
+
+      const nextStatus = recoveryEmail ? UserStatus.PENDING_VERIFICATION : UserStatus.ACTIVE;
+      const activatedUser = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          personalMailboxId: mailbox.id,
+          status: nextStatus,
+        },
+        select: userSelect,
+      });
+
+      await this.prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: {
+          status: MailboxStatus.ACTIVE,
+          provisioningError: null,
+        },
+      });
+
+      return this.authResponse(activatedUser);
+    } catch (error) {
+      const provisioningError = error instanceof Error ? error.message : "Provisioning failed.";
+      await this.prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: {
+          status: MailboxStatus.FAILED,
+          provisioningError,
+        },
+      });
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          personalMailboxId: mailbox.id,
+          status: UserStatus.FAILED,
+        },
+      });
+
+      throw new ServiceUnavailableException(
+        "Could not provision your personal JPosta mailbox. Please contact support.",
+      );
+    }
   }
 
-  async login(input: LoginInput) {
-    const email = normalizeEmail(input.email);
+  async login(input: LoginInput, rateLimitKey = "anonymous") {
+    authLimiter.check(`login:${rateLimitKey}`);
+    const identifier = normalizeLoginIdentifier(input.identifier);
     const password = requirePassword(input.password);
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [{ primaryEmail: identifier }, { email: identifier }],
+      },
+    });
 
     if (!user || !(await verifyPassword(password, user.passwordHash))) {
-      throw new UnauthorizedException("Invalid email or password.");
+      throw new UnauthorizedException("Invalid username or password.");
     }
 
-    const publicUser = {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-    };
+    if (
+      user.status === UserStatus.PENDING_PROVISIONING ||
+      user.status === UserStatus.FAILED ||
+      user.status === UserStatus.SUSPENDED
+    ) {
+      throw new UnauthorizedException("Account is not available for login.");
+    }
 
-    return {
-      user: publicUser,
-      token: this.signToken(publicUser),
-    };
+    return this.authResponse(toPublicUser(user));
   }
 
   verifyToken(token: string): AuthenticatedUser {
@@ -92,7 +217,11 @@ export class AuthService {
       email?: string;
       exp?: number;
       name?: string;
+      primaryEmail?: string;
+      role?: UserRole;
+      status?: UserStatus;
       sub?: string;
+      username?: string;
     };
 
     if (
@@ -109,16 +238,40 @@ export class AuthService {
       id: payload.sub,
       email: payload.email,
       name: payload.name,
+      primaryEmail: payload.primaryEmail ?? payload.email,
+      role: payload.role ?? UserRole.USER,
+      status: payload.status ?? UserStatus.ACTIVE,
+      username: payload.username ?? payload.email.split("@")[0] ?? "user",
     };
   }
 
-  private signToken(user: AuthenticatedUser) {
+  private authResponse(user: PublicUser) {
+    const token = this.signToken(user);
+
+    return {
+      user,
+      token,
+      accessToken: token,
+      accountStatus: user.status,
+      primaryEmail: user.primaryEmail,
+      warning:
+        user.status === UserStatus.PENDING_VERIFICATION
+          ? "Recovery email verification is pending."
+          : undefined,
+    };
+  }
+
+  private signToken(user: PublicUser) {
     const encodedHeader = base64UrlEncode(JSON.stringify({ alg: "HS256", typ: "JWT" }));
     const encodedPayload = base64UrlEncode(
       JSON.stringify({
         sub: user.id,
         email: user.email,
         name: user.name,
+        username: user.username,
+        primaryEmail: user.primaryEmail,
+        role: user.role,
+        status: user.status,
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + tokenTtlSeconds,
       }),
@@ -128,11 +281,45 @@ export class AuthService {
   }
 }
 
+type PublicUser = {
+  email: string;
+  id: string;
+  name: string;
+  primaryEmail: string;
+  role: UserRole;
+  status: UserStatus;
+  username: string;
+};
+
 const userSelect = {
-  id: true,
   email: true,
+  id: true,
   name: true,
+  primaryEmail: true,
+  role: true,
+  status: true,
+  username: true,
 } as const;
+
+function toPublicUser(user: {
+  email: string;
+  id: string;
+  name: string;
+  primaryEmail: string;
+  role: UserRole;
+  status: UserStatus;
+  username: string;
+}) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    username: user.username,
+    primaryEmail: user.primaryEmail,
+    role: user.role,
+    status: user.status,
+  };
+}
 
 async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
@@ -153,22 +340,24 @@ async function verifyPassword(password: string, storedHash: string) {
   return original.length === candidate.length && timingSafeEqual(original, candidate);
 }
 
-function normalizeEmail(value: string | undefined) {
-  const email = value?.trim().toLowerCase();
-
-  if (!email || !email.includes("@")) {
-    throw new BadRequestException("A valid email is required.");
-  }
-
-  return email;
-}
-
 function requirePassword(value: string | undefined) {
-  if (!value || value.length < 8) {
-    throw new BadRequestException("Password must be at least 8 characters.");
+  if (!value) {
+    throw new BadRequestException("Password is required.");
   }
 
   return value;
+}
+
+function requireStrongPassword(value: string | undefined) {
+  const password = requirePassword(value);
+
+  if (password.length < 10 || !/[a-z]/i.test(password) || !/[0-9]/.test(password)) {
+    throw new BadRequestException(
+      "Password must be at least 10 characters and include a letter and number.",
+    );
+  }
+
+  return password;
 }
 
 function requireText(value: string | undefined, field: string) {
@@ -198,3 +387,5 @@ function safeEquals(value: string, expected: string) {
   const right = Buffer.from(expected);
   return left.length === right.length && timingSafeEqual(left, right);
 }
+
+export { platformDomain };

@@ -4,11 +4,26 @@ export type ApiUser = {
   email: string;
   id: string;
   name: string;
+  primaryEmail: string;
+  role: "USER" | "WORKSPACE_OWNER" | "WORKSPACE_ADMIN" | "PLATFORM_ADMIN" | "SUPPORT_AGENT";
+  status: "PENDING_PROVISIONING" | "PENDING_VERIFICATION" | "ACTIVE" | "SUSPENDED" | "FAILED";
+  username: string;
 };
 
 export type AuthSession = {
+  accessToken?: string;
+  accountStatus?: ApiUser["status"];
+  primaryEmail?: string;
   token: string;
   user: ApiUser;
+  warning?: string;
+};
+
+export type UsernameAvailability = {
+  available: boolean;
+  email: string;
+  normalizedUsername: string;
+  suggestions: string[];
 };
 
 export type Organization = {
@@ -41,11 +56,12 @@ export type VerifyResult = {
 export type MailboxRecord = {
   address: string;
   displayName: string;
-  domain?: Domain;
+  domain?: Domain | null;
   id: string;
   provisioningError?: string | null;
   quotaMb: number;
   status: "PENDING" | "PROVISIONING" | "ACTIVE" | "FAILED" | "SUSPENDED";
+  type: "PERSONAL" | "BUSINESS";
 };
 
 type ApiOptions = {
@@ -81,9 +97,18 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
 }
 
 export const jpostaApi = {
-  register: (body: { email: string; name: string; password: string }) =>
-    apiRequest<AuthSession>("/auth/register", { body }),
-  login: (body: { email: string; password: string }) =>
+  usernameAvailability: (username: string) =>
+    apiRequest<UsernameAvailability>(
+      `/auth/username-availability?username=${encodeURIComponent(username)}`,
+    ),
+  register: (body: {
+    confirmPassword: string;
+    fullName: string;
+    password: string;
+    recoveryEmail?: string;
+    username: string;
+  }) => apiRequest<AuthSession>("/auth/register", { body }),
+  login: (body: { identifier: string; password: string }) =>
     apiRequest<AuthSession>("/auth/login", { body }),
   listOrganizations: (token: string) => apiRequest<Organization[]>("/organizations", { token }),
   createOrganization: (token: string, body: { name: string }) =>
