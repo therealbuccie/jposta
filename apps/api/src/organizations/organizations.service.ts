@@ -12,6 +12,13 @@ type CreateOrganizationInput = {
 export class OrganizationsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async list(user: AuthenticatedUser) {
+    return this.prisma.organization.findMany({
+      where: { ownerId: user.id },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
   async create(input: CreateOrganizationInput, user: AuthenticatedUser) {
     const name = requireText(input.name, "name");
     const slug = toSlug(input.slug || name);

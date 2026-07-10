@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Copy, Globe2, RefreshCw, ShieldCheck } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Copy, Globe2, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
 
 import {
   AppShell,
@@ -14,127 +15,157 @@ import {
   type ShellNavItem,
 } from "@jposta/ui";
 
-import { env } from "@/lib/env";
+import {
+  type AuthSession,
+  type DnsRecord,
+  type Domain,
+  jpostaApi,
+  type Organization,
+  type VerifyResult,
+} from "@/lib/api-client";
+import { formString } from "@/lib/form";
+import {
+  clearSession,
+  getStoredOrganization,
+  getStoredSession,
+  saveOrganization,
+} from "@/lib/session";
 
-const navigation: ShellNavItem[] = [
-  { label: "Inbox", iconKey: "inbox" },
-  { label: "Team Mailboxes", iconKey: "mailboxes" },
-  { label: "Domains", iconKey: "globe", active: true },
-  { label: "Billing", iconKey: "billing" },
-  { label: "Workspace Settings", iconKey: "settings" },
-];
+function navigation(router: ReturnType<typeof useRouter>): ShellNavItem[] {
+  return [
+    { label: "Overview", iconKey: "inbox", onClick: () => router.push("/") },
+    { label: "Domains", iconKey: "globe", active: true, onClick: () => router.push("/domains") },
+    { label: "Mailboxes", iconKey: "mailboxes", onClick: () => router.push("/mailboxes") },
+    { label: "Settings", iconKey: "settings" },
+  ];
+}
 
-const actions: QuickAction[] = [
-  { label: "Add domain", iconKey: "globe" },
-  { label: "Create mailbox", iconKey: "mailboxes" },
-];
-
-type Session = { token: string; user: { email: string; name: string } };
-type Organization = { id: string; name: string; slug: string };
-type Domain = { id: string; name: string; status: string; verificationError?: string | null };
-type DnsRecord = { name: string; priority?: number; type: string; value: string };
-type VerifyResult = {
-  checks: Record<string, { actual: string[]; expected: string; passed: boolean }>;
-  verified: boolean;
-};
+function actions(openAddDomain: () => void, router: ReturnType<typeof useRouter>): QuickAction[] {
+  return [
+    { label: "Add domain", iconKey: "globe", onClick: openAddDomain },
+    { label: "Create mailbox", iconKey: "mailboxes", onClick: () => router.push("/mailboxes") },
+  ];
+}
 
 export default function DomainsPage() {
-  const [session, setSession] = React.useState<Session | null>(null);
+  const router = useRouter();
+  const [session, setSession] = React.useState<AuthSession | null>(null);
   const [organization, setOrganization] = React.useState<Organization | null>(null);
   const [domains, setDomains] = React.useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = React.useState<Domain | null>(null);
   const [dnsRecords, setDnsRecords] = React.useState<DnsRecord[]>([]);
   const [verifyResult, setVerifyResult] = React.useState<VerifyResult | null>(null);
-  const [status, setStatus] = React.useState("Connect an account to start domain onboarding.");
+  const [status, setStatus] = React.useState("Loading domains...");
+  const [error, setError] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [addDomainOpen, setAddDomainOpen] = React.useState(false);
 
   React.useEffect(() => {
-    const savedSession = localStorage.getItem("jposta.session");
-    const savedOrganization = localStorage.getItem("jposta.organization");
-    if (savedSession) setSession(JSON.parse(savedSession) as Session);
-    if (savedOrganization) setOrganization(JSON.parse(savedOrganization) as Organization);
-  }, []);
+    const storedSession = getStoredSession();
+    if (!storedSession) {
+      router.replace("/login");
+      return;
+    }
 
-  React.useEffect(() => {
-    if (!session) return;
-    void loadDomains(session.token);
-  }, [session]);
+    setSession(storedSession);
+    setOrganization(getStoredOrganization());
+    void bootstrap(storedSession);
+  }, [router]);
 
-  async function loadDomains(token = session?.token) {
-    if (!token) return;
-    const nextDomains = await apiRequest<Domain[]>("/domains", undefined, token);
+  async function bootstrap(activeSession: AuthSession) {
+    setLoading(true);
+    try {
+      const organizations = await jpostaApi.listOrganizations(activeSession.token);
+      const nextOrganization = organizations[0] ?? null;
+      setOrganization(nextOrganization);
+      if (nextOrganization) saveOrganization(nextOrganization);
+      await loadDomains(activeSession, undefined, nextOrganization);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load domains.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadDomains(
+    activeSession = session,
+    selectedId?: string,
+    activeOrganization = organization,
+  ) {
+    if (!activeSession) return;
+    const nextDomains = await jpostaApi.listDomains(activeSession.token);
     setDomains(nextDomains);
-    setSelectedDomain((current) => current ?? nextDomains[0] ?? null);
+    const nextSelected =
+      nextDomains.find((domain) => domain.id === selectedId) ?? nextDomains[0] ?? null;
+    if (nextSelected) {
+      await openDomain(nextSelected, activeSession);
+    } else {
+      setSelectedDomain(null);
+      setDnsRecords([]);
+      setVerifyResult(null);
+    }
+    setStatus(activeOrganization ? "Domains loaded." : "Create a workspace before adding domains.");
   }
 
-  async function handleLogin(formData: FormData) {
-    const nextSession = await apiRequest<Session>("/auth/login", {
-      email: formData.get("email"),
-      password: formData.get("password"),
-    });
-    localStorage.setItem("jposta.session", JSON.stringify(nextSession));
-    setSession(nextSession);
-    setStatus(`Logged in as ${nextSession.user.email}.`);
-  }
-
-  async function handleOrganization(formData: FormData) {
-    if (!session) return;
-    const nextOrganization = await apiRequest<Organization>(
-      "/organizations",
-      {
-        name: formData.get("name"),
-        slug: formData.get("slug"),
-      },
-      session.token,
-    );
-    localStorage.setItem("jposta.organization", JSON.stringify(nextOrganization));
-    setOrganization(nextOrganization);
-    setStatus(`Using organization ${nextOrganization.name}.`);
-  }
-
-  async function handleDomain(formData: FormData) {
-    if (!session || !organization) return;
-    const domain = await apiRequest<Domain>(
-      "/domains",
-      {
-        name: formData.get("name"),
-        organizationId: organization.id,
-      },
-      session.token,
-    );
-    setSelectedDomain(domain);
-    setStatus(`Added ${domain.name}. Publish the DNS records, then verify.`);
-    await loadDomains();
-  }
-
-  async function openDomain(domain: Domain) {
-    if (!session) return;
-    setSelectedDomain(domain);
+  async function openDomain(domain: Domain, activeSession = session) {
+    if (!activeSession) return;
+    setError(null);
     setVerifyResult(null);
-    const response = await apiRequest<{ records: DnsRecord[] }>(
-      `/domains/${domain.id}/dns-records`,
-      undefined,
-      session.token,
-    );
-    setDnsRecords(response.records);
+    const [detail, dns] = await Promise.all([
+      jpostaApi.getDomain(activeSession.token, domain.id),
+      jpostaApi.getDomainDnsRecords(activeSession.token, domain.id),
+    ]);
+    setSelectedDomain(detail);
+    setDnsRecords(dns.records);
+  }
+
+  async function addDomain(formData: FormData) {
+    if (!session || !organization) return;
+    setError(null);
+    setLoading(true);
+    try {
+      const name = normalizeDomainInput(formString(formData, "name"));
+      const domain = await jpostaApi.createDomain(session.token, {
+        name,
+        organizationId: organization.id,
+      });
+      setAddDomainOpen(false);
+      setStatus(`Added ${domain.name}. Publish the DNS records, then verify.`);
+      await loadDomains(session, domain.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not add domain.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function verifyDomain() {
     if (!session || !selectedDomain) return;
-    const result = await apiRequest<VerifyResult>(
-      `/domains/${selectedDomain.id}/verify`,
-      {},
-      session.token,
-    );
-    setVerifyResult(result);
-    setStatus(result.verified ? "Domain verified." : "DNS records are not fully verified yet.");
-    await loadDomains();
+    setError(null);
+    try {
+      const result = await jpostaApi.verifyDomain(session.token, selectedDomain.id);
+      setVerifyResult(result);
+      setStatus(
+        result.verified
+          ? "Domain verified � ready to create mailboxes."
+          : "DNS records are not fully verified yet.",
+      );
+      await loadDomains(session, selectedDomain.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not verify domain.");
+    }
+  }
+
+  function logout() {
+    clearSession();
+    router.replace("/login");
   }
 
   return (
     <AppShell
       currentSection="Domains"
-      navigation={navigation}
-      quickActions={actions}
+      navigation={navigation(router)}
+      quickActions={actions(() => setAddDomainOpen(true), router)}
       searchPlaceholder="Search domains..."
       shellDescription="Business Workspace"
       shellTitle={organization?.name ?? "JPosta"}
@@ -149,22 +180,34 @@ export default function DomainsPage() {
             <Globe2 className="mb-3 h-5 w-5 text-sky-600" aria-hidden="true" />
             <h1 className="text-2xl font-semibold text-foreground">Domain onboarding</h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">{status}</p>
-          </GlassCard>
-          <SetupForms
-            hasOrganization={Boolean(organization)}
-            hasSession={Boolean(session)}
-            onDomain={handleDomain}
-            onLogin={handleLogin}
-            onOrganization={handleOrganization}
-          />
-          <GlassCard className="p-4 sm:p-5" intensity="default">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-foreground">Domains</h2>
-              <GlassButton size="sm" onClick={() => loadDomains()}>
+            {error ? <p className="mt-2 text-sm text-rose-500">{error}</p> : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <GlassButton
+                disabled={!organization}
+                onClick={() => setAddDomainOpen(true)}
+                variant="primary"
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add Domain
+              </GlassButton>
+              <GlassButton onClick={() => loadDomains()}>
                 <RefreshCw className="h-4 w-4" aria-hidden="true" />
                 Refresh
               </GlassButton>
+              <GlassButton variant="ghost" onClick={logout}>
+                Logout
+              </GlassButton>
             </div>
+          </GlassCard>
+
+          <GlassCard className="p-4 sm:p-5" intensity="default">
+            <h2 className="mb-4 text-lg font-semibold text-foreground">Domains</h2>
+            {loading ? <p className="text-sm text-muted-foreground">Loading domains...</p> : null}
+            {!loading && domains.length === 0 ? (
+              <div className="rounded-2xl border border-glass-edge/24 bg-white/60 p-4 text-sm text-muted-foreground shadow-inner-glass">
+                No domains yet. Add golyvin.com to begin onboarding.
+              </div>
+            ) : null}
             <div className="grid gap-2">
               {domains.map((domain) => (
                 <button
@@ -175,15 +218,7 @@ export default function DomainsPage() {
                 >
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium text-foreground">{domain.name}</span>
-                    <GlassBadge
-                      tone={
-                        domain.status === "VERIFIED" || domain.status === "ACTIVE"
-                          ? "success"
-                          : "neutral"
-                      }
-                    >
-                      {domain.status}
-                    </GlassBadge>
+                    <StatusBadge status={domain.status} />
                   </div>
                   {domain.verificationError ? (
                     <p className="mt-1 text-xs text-rose-500">{domain.verificationError}</p>
@@ -210,151 +245,131 @@ export default function DomainsPage() {
           <GlassDivider className="my-4" />
           <div className="grid gap-3">
             {dnsRecords.map((record) => (
-              <div
-                className="rounded-2xl border border-glass-edge/24 bg-white/64 p-3 shadow-inner-glass"
-                key={`${record.type}-${record.name}`}
-              >
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <GlassBadge>{record.type}</GlassBadge>
-                  <GlassButton
-                    size="sm"
-                    onClick={() => navigator.clipboard.writeText(record.value)}
-                  >
-                    <Copy className="h-4 w-4" aria-hidden="true" />
-                    Copy
-                  </GlassButton>
-                </div>
-                <p className="text-sm font-semibold text-foreground">{record.name}</p>
-                <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">
-                  {record.value}
-                </p>
-                {record.priority ? (
-                  <p className="mt-1 text-xs text-muted-foreground">Priority {record.priority}</p>
-                ) : null}
-              </div>
+              <DnsRecordCard key={`${record.type}-${record.name}`} record={record} />
             ))}
           </div>
-          {verifyResult ? (
-            <div className="mt-5 grid gap-2">
-              {Object.entries(verifyResult.checks).map(([name, check]) => (
-                <div
-                  className="rounded-2xl border border-glass-edge/24 bg-white/64 p-3 text-sm shadow-inner-glass"
-                  key={name}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium capitalize text-foreground">{name}</span>
-                    <GlassBadge tone={check.passed ? "success" : "warning"}>
-                      {check.passed ? "Passed" : "Missing"}
-                    </GlassBadge>
-                  </div>
-                  <p className="mt-1 break-all text-xs text-muted-foreground">
-                    Expected: {check.expected}
-                  </p>
-                  <p className="mt-1 break-all text-xs text-muted-foreground">
-                    Actual: {check.actual.join(", ") || "None"}
-                  </p>
-                </div>
-              ))}
+          {verifyResult ? <VerificationResult result={verifyResult} /> : null}
+          {verifyResult?.verified ? (
+            <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4 text-sm font-medium text-emerald-700">
+              Domain verified � ready to create mailboxes.
             </div>
           ) : null}
         </GlassCard>
       </div>
+
+      {addDomainOpen ? (
+        <Modal title="Add domain" onClose={() => setAddDomainOpen(false)}>
+          <form
+            className="grid gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void addDomain(new FormData(event.currentTarget));
+            }}
+          >
+            <GlassInput name="name" placeholder="golyvin.com" required />
+            <GlassButton disabled={!organization || loading} type="submit" variant="primary">
+              Add Domain
+            </GlassButton>
+          </form>
+        </Modal>
+      ) : null}
     </AppShell>
   );
 }
 
-function SetupForms({
-  hasOrganization,
-  hasSession,
-  onDomain,
-  onLogin,
-  onOrganization,
-}: {
-  hasOrganization: boolean;
-  hasSession: boolean;
-  onDomain: (formData: FormData) => void;
-  onLogin: (formData: FormData) => void;
-  onOrganization: (formData: FormData) => void;
-}) {
+function DnsRecordCard({ record }: { record: DnsRecord }) {
   return (
-    <GlassCard className="grid gap-3 p-4 sm:p-5" intensity="soft">
-      <InlineForm
-        button="Login"
-        fields={[
-          ["email", "Email"],
-          ["password", "Password"],
-        ]}
-        onSubmit={onLogin}
-      />
-      <InlineForm
-        button="Create organization"
-        disabled={!hasSession}
-        fields={[
-          ["name", "Organization"],
-          ["slug", "Slug"],
-        ]}
-        onSubmit={onOrganization}
-      />
-      <InlineForm
-        button="Add domain"
-        disabled={!hasSession || !hasOrganization}
-        fields={[["name", "Domain"]]}
-        onSubmit={onDomain}
-      />
-    </GlassCard>
+    <div className="rounded-2xl border border-glass-edge/24 bg-white/64 p-3 shadow-inner-glass">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <GlassBadge>{record.type}</GlassBadge>
+        <GlassButton size="sm" onClick={() => navigator.clipboard.writeText(record.value)}>
+          <Copy className="h-4 w-4" aria-hidden="true" />
+          Copy
+        </GlassButton>
+      </div>
+      <p className="text-sm font-semibold text-foreground">{record.name}</p>
+      <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">{record.value}</p>
+      {record.priority ? (
+        <p className="mt-1 text-xs text-muted-foreground">Priority {record.priority}</p>
+      ) : null}
+    </div>
   );
 }
 
-function InlineForm({
-  button,
-  disabled,
-  fields,
-  onSubmit,
-}: {
-  button: string;
-  disabled?: boolean;
-  fields: string[][];
-  onSubmit: (formData: FormData) => void;
-}) {
+function VerificationResult({ result }: { result: VerifyResult }) {
   return (
-    <form
-      className="grid gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit(new FormData(event.currentTarget));
-      }}
-    >
-      {fields.map(([name, placeholder]) => (
-        <GlassInput
+    <div className="mt-5 grid gap-2">
+      {Object.entries(result.checks).map(([name, check]) => (
+        <div
+          className="rounded-2xl border border-glass-edge/24 bg-white/64 p-3 text-sm shadow-inner-glass"
           key={name}
-          name={name}
-          placeholder={placeholder}
-          type={name === "password" ? "password" : "text"}
-        />
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium capitalize text-foreground">{name}</span>
+            <GlassBadge tone={check.passed ? "success" : "warning"}>
+              {check.passed ? "Passed" : "Failed"}
+            </GlassBadge>
+          </div>
+          <p className="mt-1 break-all text-xs text-muted-foreground">Expected: {check.expected}</p>
+          <p className="mt-1 break-all text-xs text-muted-foreground">
+            Actual: {check.actual.join(", ") || "None"}
+          </p>
+        </div>
       ))}
-      <GlassButton disabled={disabled} type="submit">
-        {button}
-      </GlassButton>
-    </form>
+    </div>
   );
 }
 
-async function apiRequest<T>(path: string, body?: Record<string, unknown>, token?: string) {
-  const requestInit: RequestInit = {
-    method: body ? "POST" : "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  };
+function StatusBadge({ status }: { status: Domain["status"] }) {
+  return (
+    <GlassBadge
+      tone={
+        status === "VERIFIED" || status === "ACTIVE"
+          ? "success"
+          : status === "FAILED"
+            ? "warning"
+            : "neutral"
+      }
+    >
+      {status}
+    </GlassBadge>
+  );
+}
 
-  if (body) {
-    requestInit.body = JSON.stringify(body);
+function Modal({
+  children,
+  onClose,
+  title,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  title: string;
+}) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-white/70 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-[1.5rem] border border-glass-edge/32 bg-white/95 p-5 shadow-glass">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+          <GlassButton size="icon" variant="ghost" onClick={onClose}>
+            <X className="h-4 w-4" aria-hidden="true" />
+          </GlassButton>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function normalizeDomainInput(value: string) {
+  const domain = value.trim().toLowerCase();
+
+  if (domain.includes("://") || domain.includes("/") || domain.includes("@")) {
+    throw new Error("Enter only the domain name, for example golyvin.com.");
   }
 
-  const response = await fetch(`${env.apiUrl}${path}`, requestInit);
-  const payload = (await response.json().catch(() => null)) as T | { message?: string } | null;
-  if (!response.ok)
-    throw new Error((payload as { message?: string } | null)?.message || "Request failed.");
-  return payload as T;
+  if (!/^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$/.test(domain)) {
+    throw new Error("Enter a valid domain name.");
+  }
+
+  return domain;
 }

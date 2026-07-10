@@ -30,38 +30,28 @@ export class DomainVerificationService {
     const spfExpected = "include:_spf.jposta.com";
     const dkimExpected = input.dkimPublicKey || "DKIM TXT record";
 
-    const verificationTxt = await resolveTxt(
-      `_jposta-verification.${input.name}`,
-    );
+    const verificationTxt = await resolveTxt(`_jposta-verification.${input.name}`);
 
     const mxRecords = await resolveMx(input.name);
     const rootTxt = await resolveTxt(input.name);
 
-    const dkimTxt = await resolveTxt(
-      `${input.dkimSelector}._domainkey.${input.name}`,
-    );
+    const dkimTxt = await resolveTxt(`${input.dkimSelector}._domainkey.${input.name}`);
 
     const checks = {
       verification: {
         expected: verificationExpected,
         actual: verificationTxt,
-        passed: verificationTxt.some(
-          (record) => record === verificationExpected,
-        ),
+        passed: verificationTxt.some((record) => record === verificationExpected),
       },
       mx: {
         expected: mxExpected,
         actual: mxRecords,
-        passed: mxRecords.some(
-          (record) => record.toLowerCase() === mxExpected,
-        ),
+        passed: mxRecords.some((record) => record.toLowerCase() === mxExpected),
       },
       spf: {
         expected: spfExpected,
         actual: rootTxt,
-        passed: rootTxt.some((record) =>
-          record.toLowerCase().includes(spfExpected),
-        ),
+        passed: rootTxt.some((record) => record.toLowerCase().includes(spfExpected)),
       },
       dkim: {
         expected: dkimExpected,

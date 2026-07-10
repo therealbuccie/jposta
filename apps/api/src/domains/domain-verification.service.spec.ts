@@ -10,9 +10,7 @@ describe("DomainVerificationService", () => {
   });
 
   it("passes all checks when expected DNS records exist", async () => {
-    mock.method(dns, "resolveMx", async () => [
-      { exchange: "mail.jposta.com", priority: 10 },
-    ]);
+    mock.method(dns, "resolveMx", async () => [{ exchange: "mail.jposta.com", priority: 10 }]);
 
     mock.method(dns, "resolveTxt", async (hostname: string) => {
       if (hostname.startsWith("_jposta-verification")) {

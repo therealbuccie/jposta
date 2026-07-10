@@ -2,18 +2,11 @@
 
 import * as React from "react";
 import {
-  Archive,
-  ArchiveX,
   ArrowLeft,
   Bold,
-  ChevronDown,
   ChevronUp,
   Code2,
-  Download,
   Eraser,
-  ExternalLink,
-  FileDown,
-  FolderInput,
   Forward,
   Image,
   Italic,
@@ -22,14 +15,12 @@ import {
   ListOrdered,
   MailOpen,
   Maximize2,
-  MoreHorizontal,
   Minimize2,
   MailPlus,
   Paperclip,
   Save,
   Search,
   Send,
-  Printer,
   Reply,
   Quote,
   ReplyAll,
@@ -48,7 +39,6 @@ import {
   GlassBadge,
   GlassButton,
   GlassCard,
-  GlassDivider,
   StatusIndicator,
   type QuickAction,
   type ShellIconKey,
@@ -319,7 +309,6 @@ export function EmployeeWorkspaceClient() {
   const selectedEmail = emails[selectedEmailIndex]!;
   const selectedMessages = getMessages(selectedEmail);
   const latestMessage = selectedMessages[selectedMessages.length - 1]!;
-  const isThread = selectedMessages.length > 1;
   const openCompose = React.useCallback(
     (mode: ComposeMode) => {
       const participants = getParticipants(selectedMessages);

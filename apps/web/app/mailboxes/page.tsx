@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Mailbox, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Mailbox, Plus, RefreshCw, ShieldAlert, Trash2, X } from "lucide-react";
 
 import {
   AppShell,
@@ -14,120 +15,186 @@ import {
   type ShellNavItem,
 } from "@jposta/ui";
 
-import { env } from "@/lib/env";
+import {
+  type AuthSession,
+  type Domain,
+  jpostaApi,
+  type MailboxRecord,
+  type Organization,
+} from "@/lib/api-client";
+import { formString } from "@/lib/form";
+import {
+  clearSession,
+  getStoredOrganization,
+  getStoredSession,
+  saveOrganization,
+} from "@/lib/session";
 
-const navigation: ShellNavItem[] = [
-  { label: "Inbox", iconKey: "inbox" },
-  { label: "Team Mailboxes", iconKey: "mailboxes", active: true },
-  { label: "Domains", iconKey: "globe" },
-  { label: "Billing", iconKey: "billing" },
-  { label: "Workspace Settings", iconKey: "settings" },
-];
+function customerNavigation(router: ReturnType<typeof useRouter>): ShellNavItem[] {
+  return [
+    { label: "Overview", iconKey: "inbox", onClick: () => router.push("/") },
+    { label: "Domains", iconKey: "globe", onClick: () => router.push("/domains") },
+    {
+      label: "Mailboxes",
+      iconKey: "mailboxes",
+      active: true,
+      onClick: () => router.push("/mailboxes"),
+    },
+    { label: "Settings", iconKey: "settings" },
+  ];
+}
 
-const actions: QuickAction[] = [
-  { label: "Create mailbox", iconKey: "mailboxes" },
-  { label: "Add domain", iconKey: "globe" },
-];
-
-type Session = { token: string; user: { email: string; name: string } };
-type Organization = { id: string; name: string; slug: string };
-type Domain = { id: string; name: string; status: string };
-type MailboxRecord = {
-  address: string;
-  displayName: string;
-  id: string;
-  provisioningError?: string | null;
-  quotaMb: number;
-  status: string;
-};
+function customerActions(
+  openCreateMailbox: () => void,
+  router: ReturnType<typeof useRouter>,
+): QuickAction[] {
+  return [
+    { label: "Create mailbox", iconKey: "mailboxes", onClick: openCreateMailbox },
+    { label: "Add domain", iconKey: "globe", onClick: () => router.push("/domains") },
+  ];
+}
 
 export default function MailboxesPage() {
-  const [session, setSession] = React.useState<Session | null>(null);
+  const router = useRouter();
+  const [session, setSession] = React.useState<AuthSession | null>(null);
   const [organization, setOrganization] = React.useState<Organization | null>(null);
   const [domains, setDomains] = React.useState<Domain[]>([]);
   const [mailboxes, setMailboxes] = React.useState<MailboxRecord[]>([]);
-  const [status, setStatus] = React.useState(
-    "Login and select a verified domain to provision mailboxes.",
-  );
+  const [status, setStatus] = React.useState("Loading mailboxes...");
+  const [error, setError] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [createOpen, setCreateOpen] = React.useState(false);
 
   React.useEffect(() => {
-    const savedSession = localStorage.getItem("jposta.session");
-    const savedOrganization = localStorage.getItem("jposta.organization");
-    if (savedSession) setSession(JSON.parse(savedSession) as Session);
-    if (savedOrganization) setOrganization(JSON.parse(savedOrganization) as Organization);
-  }, []);
+    const storedSession = getStoredSession();
+    if (!storedSession) {
+      router.replace("/login");
+      return;
+    }
 
-  React.useEffect(() => {
-    if (!session) return;
-    void refresh(session.token);
-  }, [session]);
+    setSession(storedSession);
+    setOrganization(getStoredOrganization());
+    void bootstrap(storedSession);
+  }, [router]);
 
-  async function refresh(token = session?.token) {
-    if (!token) return;
+  async function bootstrap(activeSession: AuthSession) {
+    setLoading(true);
+    try {
+      const organizations = await jpostaApi.listOrganizations(activeSession.token);
+      const nextOrganization = organizations[0] ?? null;
+      setOrganization(nextOrganization);
+      if (nextOrganization) saveOrganization(nextOrganization);
+      await refresh(activeSession, nextOrganization);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load mailboxes.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function refresh(activeSession = session, activeOrganization = organization) {
+    if (!activeSession) return;
+    setError(null);
     const [nextDomains, nextMailboxes] = await Promise.all([
-      apiRequest<Domain[]>("/domains", undefined, token),
-      apiRequest<MailboxRecord[]>("/mailboxes", undefined, token),
+      jpostaApi.listDomains(activeSession.token),
+      jpostaApi.listMailboxes(activeSession.token),
     ]);
-    setDomains(
-      nextDomains.filter((domain) => domain.status === "VERIFIED" || domain.status === "ACTIVE"),
-    );
+    setDomains(nextDomains);
     setMailboxes(nextMailboxes);
-  }
-
-  async function handleLogin(formData: FormData) {
-    const nextSession = await apiRequest<Session>("/auth/login", {
-      email: formData.get("email"),
-      password: formData.get("password"),
-    });
-    localStorage.setItem("jposta.session", JSON.stringify(nextSession));
-    setSession(nextSession);
-    setStatus(`Logged in as ${nextSession.user.email}.`);
-  }
-
-  async function handleCreate(formData: FormData) {
-    if (!session || !organization) return;
-    await apiRequest<MailboxRecord>(
-      "/mailboxes",
-      {
-        organizationId: organization.id,
-        domainId: formData.get("domainId"),
-        localPart: formData.get("localPart"),
-        displayName: formData.get("displayName"),
-        password: formData.get("password"),
-        quotaMb: Number(formData.get("quotaMb") || 5120),
-      },
-      session.token,
+    const verifiedCount = nextDomains.filter(isDomainReady).length;
+    setStatus(
+      activeOrganization
+        ? `${verifiedCount} verified domain${verifiedCount === 1 ? "" : "s"} available for mailbox creation.`
+        : "Create a workspace before provisioning mailboxes.",
     );
-    setStatus("Mailbox provisioning requested.");
-    await refresh();
+  }
+
+  async function createMailbox(formData: FormData) {
+    if (!session || !organization) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const domainId = formString(formData, "domainId");
+      const domain = domains.find((item) => item.id === domainId);
+      const localPart = normalizeLocalPart(formString(formData, "localPart"));
+      const password = formString(formData, "password");
+      const confirmPassword = formString(formData, "confirmPassword");
+
+      if (!domain || !isDomainReady(domain)) {
+        throw new Error("Select a verified or active domain before creating a mailbox.");
+      }
+
+      if (password !== confirmPassword) {
+        throw new Error("Passwords do not match.");
+      }
+
+      const mailbox = await jpostaApi.createMailbox(session.token, {
+        organizationId: organization.id,
+        domainId,
+        localPart,
+        displayName: formString(formData, "displayName").trim(),
+        password,
+        quotaMb: Number(formData.get("quotaMb") || 5120),
+      });
+      setStatus(`Created ${mailbox.address}. Provisioning status: ${mailbox.status}.`);
+      setCreateOpen(false);
+      await refresh(session, organization);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not create mailbox.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function resetPassword(mailbox: MailboxRecord) {
+    if (!session) return;
     const password = window.prompt(`New password for ${mailbox.address}`);
-    if (!password || !session) return;
-    await apiRequest(`/mailboxes/${mailbox.id}/password`, { password }, session.token, "PATCH");
-    setStatus(`Password reset for ${mailbox.address}.`);
+    if (!password) return;
+    setError(null);
+    try {
+      await jpostaApi.resetMailboxPassword(session.token, mailbox.id, password);
+      setStatus(`Password reset for ${mailbox.address}.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not reset password.");
+    }
   }
 
   async function suspendMailbox(mailbox: MailboxRecord) {
-    if (!session) return;
-    await apiRequest(`/mailboxes/${mailbox.id}/suspend`, {}, session.token, "PATCH");
-    setStatus(`Suspended ${mailbox.address}.`);
-    await refresh();
+    if (!session || !window.confirm(`Suspend ${mailbox.address}?`)) return;
+    setError(null);
+    try {
+      await jpostaApi.suspendMailbox(session.token, mailbox.id);
+      setStatus(`Suspended ${mailbox.address}.`);
+      await refresh(session, organization);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not suspend mailbox.");
+    }
   }
 
   async function deleteMailbox(mailbox: MailboxRecord) {
-    if (!session || !window.confirm(`Delete ${mailbox.address}?`)) return;
-    await apiRequest(`/mailboxes/${mailbox.id}`, undefined, session.token, "DELETE");
-    setStatus(`Deleted ${mailbox.address}.`);
-    await refresh();
+    if (!session || !window.confirm(`Delete ${mailbox.address}? This cannot be undone.`)) return;
+    setError(null);
+    try {
+      await jpostaApi.deleteMailbox(session.token, mailbox.id);
+      setStatus(`Deleted ${mailbox.address}.`);
+      await refresh(session, organization);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not delete mailbox.");
+    }
   }
+
+  function logout() {
+    clearSession();
+    router.replace("/login");
+  }
+
+  const readyDomains = domains.filter(isDomainReady);
 
   return (
     <AppShell
-      currentSection="Team Mailboxes"
-      navigation={navigation}
-      quickActions={actions}
+      currentSection="Mailboxes"
+      navigation={customerNavigation(router)}
+      quickActions={customerActions(() => setCreateOpen(true), router)}
       searchPlaceholder="Search mailboxes..."
       shellDescription="Business Workspace"
       shellTitle={organization?.name ?? "JPosta"}
@@ -136,54 +203,34 @@ export default function MailboxesPage() {
       workspace={organization?.name ?? "Business Workspace"}
       workspaceLabel="Mailboxes"
     >
-      <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-        <div className="grid gap-4">
-          <GlassCard className="p-4 sm:p-5" intensity="soft">
-            <Mailbox className="mb-3 h-5 w-5 text-sky-600" aria-hidden="true" />
-            <h1 className="text-2xl font-semibold text-foreground">Mailbox provisioning</h1>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">{status}</p>
-          </GlassCard>
-          <GlassCard className="grid gap-3 p-4 sm:p-5" intensity="soft">
-            <InlineForm
-              button="Login"
-              fields={[
-                ["email", "Email"],
-                ["password", "Password"],
-              ]}
-              onSubmit={handleLogin}
-            />
-            <form
-              className="grid gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleCreate(new FormData(event.currentTarget));
-              }}
-            >
-              <select
-                className="h-11 rounded-control border border-input bg-white/70 px-3 text-sm text-foreground"
-                name="domainId"
-                required
-              >
-                <option value="">Verified domain</option>
-                {domains.map((domain) => (
-                  <option key={domain.id} value={domain.id}>
-                    {domain.name}
-                  </option>
-                ))}
-              </select>
-              <GlassInput name="localPart" placeholder="support" />
-              <GlassInput name="displayName" placeholder="Support Team" />
-              <GlassInput name="password" placeholder="Mailbox password" type="password" />
-              <GlassInput name="quotaMb" placeholder="5120" type="number" />
+      <div className="grid gap-4">
+        <GlassCard className="p-4 sm:p-5" intensity="soft">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <Mailbox className="mb-3 h-5 w-5 text-sky-600" aria-hidden="true" />
+              <h1 className="text-2xl font-semibold text-foreground">Mailbox provisioning</h1>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{status}</p>
+              {error ? <p className="mt-2 text-sm text-rose-500">{error}</p> : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
               <GlassButton
-                disabled={!session || !organization || domains.length === 0}
-                type="submit"
+                disabled={!organization || readyDomains.length === 0}
+                onClick={() => setCreateOpen(true)}
+                variant="primary"
               >
-                Create mailbox
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Create Mailbox
               </GlassButton>
-            </form>
-          </GlassCard>
-        </div>
+              <GlassButton onClick={() => refresh()}>
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                Refresh
+              </GlassButton>
+              <GlassButton variant="ghost" onClick={logout}>
+                Logout
+              </GlassButton>
+            </div>
+          </div>
+        </GlassCard>
 
         <GlassCard className="p-4 sm:p-5" intensity="default">
           <div className="mb-4 flex items-center justify-between gap-3">
@@ -191,115 +238,207 @@ export default function MailboxesPage() {
               <p className="text-sm text-muted-foreground">Provisioned accounts</p>
               <h2 className="text-xl font-semibold text-foreground">Mailboxes</h2>
             </div>
-            <GlassButton size="sm" onClick={() => refresh()}>
-              <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              Refresh
-            </GlassButton>
+            <GlassBadge tone="neutral">{mailboxes.length} total</GlassBadge>
           </div>
           <GlassDivider className="my-4" />
+          {loading ? <p className="text-sm text-muted-foreground">Loading mailboxes...</p> : null}
+          {!loading && mailboxes.length === 0 ? (
+            <div className="rounded-2xl border border-glass-edge/24 bg-white/60 p-4 text-sm text-muted-foreground shadow-inner-glass">
+              No mailboxes yet. Verify a domain, then create admin@golyvin.com.
+            </div>
+          ) : null}
           <div className="grid gap-3">
             {mailboxes.map((mailbox) => (
-              <div
-                className="rounded-2xl border border-glass-edge/24 bg-white/64 p-4 shadow-inner-glass"
+              <MailboxRow
                 key={mailbox.id}
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="break-all text-sm font-semibold text-foreground">
-                      {mailbox.address}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {mailbox.displayName} / {mailbox.quotaMb} MB
-                    </p>
-                    {mailbox.provisioningError ? (
-                      <p className="mt-1 text-xs text-rose-500">{mailbox.provisioningError}</p>
-                    ) : null}
-                  </div>
-                  <GlassBadge
-                    tone={
-                      mailbox.status === "ACTIVE"
-                        ? "success"
-                        : mailbox.status === "FAILED"
-                          ? "warning"
-                          : "neutral"
-                    }
-                  >
-                    {mailbox.status}
-                  </GlassBadge>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <GlassButton size="sm" onClick={() => resetPassword(mailbox)}>
-                    Reset password
-                  </GlassButton>
-                  <GlassButton size="sm" onClick={() => suspendMailbox(mailbox)}>
-                    <ShieldAlert className="h-4 w-4" aria-hidden="true" />
-                    Suspend
-                  </GlassButton>
-                  <GlassButton size="sm" variant="ghost" onClick={() => deleteMailbox(mailbox)}>
-                    <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    Delete
-                  </GlassButton>
-                </div>
-              </div>
+                mailbox={mailbox}
+                onDelete={() => deleteMailbox(mailbox)}
+                onResetPassword={() => resetPassword(mailbox)}
+                onSuspend={() => suspendMailbox(mailbox)}
+              />
             ))}
           </div>
         </GlassCard>
       </div>
+
+      {createOpen ? (
+        <CreateMailboxModal
+          domains={readyDomains}
+          loading={loading}
+          onClose={() => setCreateOpen(false)}
+          onSubmit={createMailbox}
+        />
+      ) : null}
     </AppShell>
   );
 }
 
-function InlineForm({
-  button,
-  fields,
-  onSubmit,
+function MailboxRow({
+  mailbox,
+  onDelete,
+  onResetPassword,
+  onSuspend,
 }: {
-  button: string;
-  fields: string[][];
-  onSubmit: (formData: FormData) => void;
+  mailbox: MailboxRecord;
+  onDelete: () => void;
+  onResetPassword: () => void;
+  onSuspend: () => void;
 }) {
   return (
-    <form
-      className="grid gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSubmit(new FormData(event.currentTarget));
-      }}
-    >
-      {fields.map(([name, placeholder]) => (
-        <GlassInput
-          key={name}
-          name={name}
-          placeholder={placeholder}
-          type={name === "password" ? "password" : "text"}
-        />
-      ))}
-      <GlassButton type="submit">{button}</GlassButton>
-    </form>
+    <div className="rounded-2xl border border-glass-edge/24 bg-white/64 p-4 shadow-inner-glass">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="break-all text-sm font-semibold text-foreground">{mailbox.address}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {mailbox.displayName || "No display name"} /{" "}
+            {mailbox.domain?.name ?? domainFromAddress(mailbox.address)} / {mailbox.quotaMb} MB
+          </p>
+          {mailbox.provisioningError ? (
+            <p className="mt-1 text-xs text-rose-500">{mailbox.provisioningError}</p>
+          ) : null}
+        </div>
+        <StatusBadge status={mailbox.status} />
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <GlassButton size="sm" onClick={onResetPassword}>
+          Reset password
+        </GlassButton>
+        <GlassButton size="sm" onClick={onSuspend}>
+          <ShieldAlert className="h-4 w-4" aria-hidden="true" />
+          Suspend
+        </GlassButton>
+        <GlassButton size="sm" variant="ghost" onClick={onDelete}>
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+          Delete
+        </GlassButton>
+      </div>
+    </div>
   );
 }
 
-async function apiRequest<T>(
-  path: string,
-  body?: Record<string, unknown>,
-  token?: string,
-  method?: "DELETE" | "PATCH" | "POST",
-) {
-  const requestInit: RequestInit = {
-    method: method ?? (body ? "POST" : "GET"),
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  };
+function CreateMailboxModal({
+  domains,
+  loading,
+  onClose,
+  onSubmit,
+}: {
+  domains: Domain[];
+  loading: boolean;
+  onClose: () => void;
+  onSubmit: (formData: FormData) => void;
+}) {
+  const [domainId, setDomainId] = React.useState(domains[0]?.id ?? "");
+  const [localPart, setLocalPart] = React.useState("admin");
+  const selectedDomain = domains.find((domain) => domain.id === domainId);
+  const address =
+    selectedDomain && localPart
+      ? `${localPart.trim().toLowerCase()}@${selectedDomain.name}`
+      : "admin@golyvin.com";
 
-  if (body) {
-    requestInit.body = JSON.stringify(body);
+  return (
+    <Modal title="Create mailbox" onClose={onClose}>
+      <form
+        className="grid gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit(new FormData(event.currentTarget));
+        }}
+      >
+        <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+          Verified domain
+          <select
+            className="h-11 rounded-control border border-input bg-white/80 px-3 text-sm text-foreground shadow-inner-glass"
+            name="domainId"
+            required
+            value={domainId}
+            onChange={(event) => setDomainId(event.target.value)}
+          >
+            {domains.map((domain) => (
+              <option key={domain.id} value={domain.id}>
+                {domain.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <GlassInput
+          name="localPart"
+          placeholder="admin"
+          required
+          value={localPart}
+          onChange={(event) => setLocalPart(event.target.value)}
+        />
+        <GlassInput name="displayName" placeholder="Admin" required />
+        <GlassInput name="password" placeholder="Mailbox password" required type="password" />
+        <GlassInput
+          name="confirmPassword"
+          placeholder="Confirm password"
+          required
+          type="password"
+        />
+        <GlassInput min={512} name="quotaMb" placeholder="5120" required type="number" />
+        <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-3 text-sm text-sky-800 shadow-inner-glass">
+          Complete address: <span className="font-semibold">{address}</span>
+        </div>
+        <GlassButton disabled={loading || domains.length === 0} type="submit" variant="primary">
+          Create Mailbox
+        </GlassButton>
+      </form>
+    </Modal>
+  );
+}
+
+function Modal({
+  children,
+  onClose,
+  title,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  title: string;
+}) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-white/70 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-[1.5rem] border border-glass-edge/32 bg-white/95 p-5 shadow-glass">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+          <GlassButton size="icon" variant="ghost" onClick={onClose}>
+            <X className="h-4 w-4" aria-hidden="true" />
+          </GlassButton>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: MailboxRecord["status"] }) {
+  return (
+    <GlassBadge
+      tone={
+        status === "ACTIVE"
+          ? "success"
+          : status === "FAILED" || status === "SUSPENDED"
+            ? "warning"
+            : "neutral"
+      }
+    >
+      {status}
+    </GlassBadge>
+  );
+}
+
+function isDomainReady(domain: Domain) {
+  return domain.status === "VERIFIED" || domain.status === "ACTIVE";
+}
+
+function normalizeLocalPart(value: string) {
+  const localPart = value.trim().toLowerCase();
+  if (!/^[a-z0-9._-]{1,64}$/.test(localPart)) {
+    throw new Error("Use a valid local part such as admin, support, or billing.");
   }
+  return localPart;
+}
 
-  const response = await fetch(`${env.apiUrl}${path}`, requestInit);
-  const payload = (await response.json().catch(() => null)) as T | { message?: string } | null;
-  if (!response.ok)
-    throw new Error((payload as { message?: string } | null)?.message || "Request failed.");
-  return payload as T;
+function domainFromAddress(address: string) {
+  return address.split("@")[1] ?? "Unknown domain";
 }
