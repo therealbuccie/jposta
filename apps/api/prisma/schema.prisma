@@ -30,13 +30,13 @@ model Organization {
   id                   String           @id @default(cuid())
   name                 String
   slug                 String           @unique
+  ownerId              String
+  owner                User             @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   mailPortalEnabled    Boolean          @default(true)
   portalDisplayName    String?
   portalLogoUrl        String?
   portalWelcomeMessage String?
   portalStatus         PortalStatus     @default(ACTIVE)
-  ownerId              String
-  owner                User             @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   domains              Domain[]
   mailboxes            Mailbox[]
   webmailSessions      WebmailSession[]
@@ -63,23 +63,23 @@ model Domain {
 }
 
 model Mailbox {
-  id                String           @id @default(cuid())
-  address           String           @unique
-  displayName       String
-  type              MailboxType      @default(BUSINESS)
-  status            MailboxStatus    @default(PENDING)
-  provisioningError String?
-  quotaMb           Int              @default(5120)
-  organizationId    String?
-  domainId          String?
-  userId            String?
-  personalUser      User?            @relation("UserPersonalMailbox")
-  organization      Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  domain            Domain?          @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  user              User?            @relation("MailboxUser", fields: [userId], references: [id], onDelete: SetNull)
-  webmailSessions   WebmailSession[]
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  id                 String           @id @default(cuid())
+  address            String           @unique
+  displayName        String
+  type               MailboxType      @default(BUSINESS)
+  status             MailboxStatus    @default(PENDING)
+  provisioningError  String?
+  quotaMb            Int              @default(5120)
+  organizationId     String?
+  domainId           String?
+  userId             String?
+  personalUser       User?            @relation("UserPersonalMailbox")
+  organization       Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  domain             Domain?          @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  user               User?            @relation("MailboxUser", fields: [userId], references: [id], onDelete: SetNull)
+  webmailSessions    WebmailSession[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 }
 
 model WebmailSession {
@@ -96,6 +96,10 @@ model WebmailSession {
   organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
+
+  @@index([mailboxId])
+  @@index([organizationId])
+  @@index([portalSlug])
 }
 
 enum UserStatus {

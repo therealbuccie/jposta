@@ -45,6 +45,8 @@ import {
   type ShellNavItem,
 } from "@jposta/ui";
 
+import { EmployeeWebmailCore } from "./employee-webmail-core";
+
 type EmployeeNavigationItem = {
   active?: boolean;
   badge?: string;
@@ -456,6 +458,7 @@ export function EmployeeWorkspaceClient() {
       workspace="alex@36t.studio"
       workspaceLabel="Employee Workspace"
     >
+      <EmployeeWebmailCore />
       <div className="relative">
         <div className="pointer-events-none sticky top-[5.75rem] z-20 mb-4 flex justify-end gap-2">
           <GlassButton

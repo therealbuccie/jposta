@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..", "dist");
+const appRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const srcRoot = join(appRoot, "src");
+const distRoot = join(appRoot, "dist");
 const files = [];
 
 function walk(directory) {
@@ -13,13 +15,14 @@ function walk(directory) {
       walk(path);
       continue;
     }
-    if (path.endsWith(".spec.js")) {
-      files.push(path);
+    if (path.endsWith(".spec.ts")) {
+      const compiled = join(distRoot, relative(srcRoot, path)).replace(/\.ts$/, ".js");
+      if (existsSync(compiled)) files.push(compiled);
     }
   }
 }
 
-walk(root);
+walk(srcRoot);
 
 if (!files.length) {
   console.error("No compiled spec files found. Run pnpm --filter @jposta/api build first.");

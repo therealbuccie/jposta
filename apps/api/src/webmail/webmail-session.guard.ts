@@ -1,15 +1,15 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
 
-import { WebmailService } from "./webmail.service";
+import { WebmailSessionService } from "./webmail-session.service";
 
 export type WebmailRequest = {
-  webmailSession: Awaited<ReturnType<WebmailService["getSession"]>>;
   headers: Record<string, string | string[] | undefined>;
+  webmailSession: Awaited<ReturnType<WebmailSessionService["getSession"]>>;
 };
 
 @Injectable()
 export class WebmailSessionGuard implements CanActivate {
-  constructor(private readonly webmailService: WebmailService) {}
+  constructor(private readonly sessions: WebmailSessionService) {}
 
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<WebmailRequest>();
@@ -21,7 +21,7 @@ export class WebmailSessionGuard implements CanActivate {
       throw new UnauthorizedException("Webmail session required.");
     }
 
-    request.webmailSession = await this.webmailService.getSession(token);
+    request.webmailSession = await this.sessions.getSession(token);
     return true;
   }
 }

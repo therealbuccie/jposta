@@ -28,16 +28,45 @@ export type PortalInfo = {
   slug: string;
 };
 
-export type WebmailMe = {
-  mailbox: { address: string; displayName: string; status: string };
-  portal: { displayName: string; logoUrl?: string | null; organizationName: string; slug: string };
-};
-
 export type WebmailLogin = {
   mailbox: { address: string; displayName: string };
   portal: { displayName: string; slug: string };
   redirectTo: string;
   webmailSessionToken: string;
+};
+
+export type WebmailMe = {
+  mailbox: { address: string; displayName: string; status: string };
+  portal: { slug: string; organizationName: string; displayName: string; logoUrl?: string | null };
+};
+
+export type WebmailFolder = {
+  name: string;
+  path: string;
+  specialUse?: string;
+  total: number;
+  unread: number;
+};
+
+export type WebmailMessage = {
+  uid: number;
+  messageId: string;
+  from: string;
+  to: string;
+  subject: string;
+  preview: string;
+  date: string | null;
+  unread: boolean;
+  starred: boolean;
+  hasAttachments: boolean;
+};
+
+export type WebmailMessageDetail = WebmailMessage & {
+  cc?: string;
+  bcc?: string;
+  text: string;
+  sanitizedHtml: string;
+  attachments: Array<{ partId: string; filename: string; contentType: string; size: number }>;
 };
 
 export type UsernameAvailability = {
@@ -122,6 +151,52 @@ export const jpostaApi = {
   webmailLogin: (body: { email: string; password: string; portalSlug: string }) =>
     apiRequest<WebmailLogin>("/webmail/auth/login", { body }),
   webmailMe: (token: string) => apiRequest<WebmailMe>("/webmail/me", { token }),
+  webmailFolders: (token: string) =>
+    apiRequest<{ folders: WebmailFolder[] }>("/webmail/folders", { token }),
+  webmailMessages: (token: string, query = "") =>
+    apiRequest<{
+      folder: string;
+      page: number;
+      pageSize: number;
+      total: number;
+      hasMore: boolean;
+      messages: WebmailMessage[];
+    }>(`/webmail/messages${query}`, { token }),
+  webmailMessage: (token: string, uid: number, folder: string) =>
+    apiRequest<WebmailMessageDetail>(
+      `/webmail/messages/${uid}?folder=${encodeURIComponent(folder)}`,
+      { token },
+    ),
+  webmailSetRead: (token: string, uid: number, body: { folder: string; read: boolean }) =>
+    apiRequest<{ updated: boolean }>(`/webmail/messages/${uid}/read`, {
+      token,
+      method: "PATCH",
+      body,
+    }),
+  webmailSetStar: (token: string, uid: number, body: { folder: string; starred: boolean }) =>
+    apiRequest<{ updated: boolean }>(`/webmail/messages/${uid}/star`, {
+      token,
+      method: "PATCH",
+      body,
+    }),
+  webmailMove: (token: string, uid: number, body: { fromFolder: string; toFolder: string }) =>
+    apiRequest<{ moved: boolean }>(`/webmail/messages/${uid}/move`, { token, body }),
+  webmailDelete: (token: string, uid: number, folder: string) =>
+    apiRequest<{ deleted?: boolean; moved?: boolean }>(
+      `/webmail/messages/${uid}?folder=${encodeURIComponent(folder)}`,
+      { token, method: "DELETE" },
+    ),
+  webmailSend: (token: string, body: Record<string, unknown>) =>
+    apiRequest<{ messageId: string; accepted: string[]; rejected: string[] }>("/webmail/send", {
+      token,
+      body,
+    }),
+  webmailSaveDraft: (token: string, body: Record<string, unknown>, uid?: number) =>
+    apiRequest<{ uid: number }>(uid ? `/webmail/drafts/${uid}` : "/webmail/drafts", {
+      token,
+      method: uid ? "PATCH" : "POST",
+      body,
+    }),
   webmailLogout: (token: string) =>
     apiRequest<{ revoked: boolean }>("/webmail/logout", { token, body: {} }),
   usernameAvailability: (username: string) =>

@@ -1,11 +1,11 @@
 const webmailSessionKey = "jposta.webmail.session";
 
 export type WebmailSession = {
-  mailbox: {
+  mailbox?: {
     address: string;
     displayName: string;
   };
-  portal: {
+  portal?: {
     displayName: string;
     slug: string;
   };
