@@ -3,6 +3,7 @@ type ApiEnvironment = {
   nodeEnv: "development" | "test" | "staging" | "production";
   port: number;
   webOrigin: string;
+  webmailCredentialEncryptionSecret: string;
 };
 
 const allowedNodeEnvs = ["development", "test", "staging", "production"] as const;
@@ -42,4 +43,8 @@ export const env: ApiEnvironment = {
   nodeEnv: readNodeEnv(process.env.NODE_ENV),
   port: readPort(process.env.API_PORT),
   webOrigin: process.env.WEB_ORIGIN || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+  webmailCredentialEncryptionSecret: readRequiredSecret(
+    process.env.WEBMAIL_CREDENTIAL_ENCRYPTION_SECRET ?? process.env.JWT_SECRET,
+    "WEBMAIL_CREDENTIAL_ENCRYPTION_SECRET",
+  ),
 };

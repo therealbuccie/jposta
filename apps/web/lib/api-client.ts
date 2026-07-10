@@ -19,6 +19,27 @@ export type AuthSession = {
   warning?: string;
 };
 
+export type PortalInfo = {
+  organizationName: string;
+  portalDisplayName?: string | null;
+  portalLogoUrl?: string | null;
+  portalStatus: "ACTIVE" | "DISABLED";
+  portalWelcomeMessage?: string | null;
+  slug: string;
+};
+
+export type WebmailMe = {
+  mailbox: { address: string; displayName: string; status: string };
+  portal: { displayName: string; logoUrl?: string | null; organizationName: string; slug: string };
+};
+
+export type WebmailLogin = {
+  mailbox: { address: string; displayName: string };
+  portal: { displayName: string; slug: string };
+  redirectTo: string;
+  webmailSessionToken: string;
+};
+
 export type UsernameAvailability = {
   available: boolean;
   email: string;
@@ -97,6 +118,12 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
 }
 
 export const jpostaApi = {
+  getPortal: (slug: string) => apiRequest<PortalInfo>(`/public/portal/${encodeURIComponent(slug)}`),
+  webmailLogin: (body: { email: string; password: string; portalSlug: string }) =>
+    apiRequest<WebmailLogin>("/webmail/auth/login", { body }),
+  webmailMe: (token: string) => apiRequest<WebmailMe>("/webmail/me", { token }),
+  webmailLogout: (token: string) =>
+    apiRequest<{ revoked: boolean }>("/webmail/logout", { token, body: {} }),
   usernameAvailability: (username: string) =>
     apiRequest<UsernameAvailability>(
       `/auth/username-availability?username=${encodeURIComponent(username)}`,

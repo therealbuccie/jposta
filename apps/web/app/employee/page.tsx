@@ -1,5 +1,5 @@
-import { EmployeeWorkspaceClient } from "./employee-workspace-client";
+import { EmployeePortalGate } from "./employee-portal-gate";
 
 export default function EmployeeWorkspacePage() {
-  return <EmployeeWorkspaceClient />;
+  return <EmployeePortalGate />;
 }

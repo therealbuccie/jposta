@@ -33,6 +33,9 @@ const result = spawnSync(process.execPath, ["--test", ...files], {
     JWT_SECRET: process.env.JWT_SECRET ?? "test-jwt-secret-with-at-least-32-characters",
     DOMAIN_KEY_ENCRYPTION_SECRET:
       process.env.DOMAIN_KEY_ENCRYPTION_SECRET ?? "test-domain-secret-with-at-least-32-chars",
+    WEBMAIL_CREDENTIAL_ENCRYPTION_SECRET:
+      process.env.WEBMAIL_CREDENTIAL_ENCRYPTION_SECRET ??
+      "test-webmail-secret-with-at-least-32-chars",
   },
 });
 process.exit(result.status ?? 1);

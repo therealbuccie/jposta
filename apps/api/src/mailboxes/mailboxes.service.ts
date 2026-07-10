@@ -127,6 +127,7 @@ export class MailboxesService {
     const password = requirePassword(input.password);
 
     await this.mailProvisioningService.updatePassword(mailbox.address, password);
+    await this.revokeWebmailSessions(mailbox.id);
 
     return this.prisma.mailbox.update({
       where: { id: mailbox.id },
@@ -139,6 +140,8 @@ export class MailboxesService {
 
   async suspend(id: string, user: AuthenticatedUser) {
     const mailbox = await this.getOwnedMailbox(id, user.id);
+
+    await this.revokeWebmailSessions(mailbox.id);
 
     return this.prisma.mailbox.update({
       where: { id: mailbox.id },
@@ -153,9 +156,17 @@ export class MailboxesService {
     const mailbox = await this.getOwnedMailbox(id, user.id);
 
     await this.mailProvisioningService.deleteMailbox(mailbox.address);
+    await this.revokeWebmailSessions(mailbox.id);
     await this.prisma.mailbox.delete({ where: { id: mailbox.id } });
 
     return { deleted: true };
+  }
+
+  private async revokeWebmailSessions(mailboxId: string) {
+    await this.prisma.webmailSession.updateMany({
+      where: { mailboxId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 
   private async getOwnedMailbox(id: string, userId: string) {

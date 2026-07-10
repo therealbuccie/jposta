@@ -1,5 +1,5 @@
-import { BusinessWorkspaceClient } from "./business-workspace-client";
+import { HomeRouter } from "./home-router";
 
 export default function HomePage() {
-  return <BusinessWorkspaceClient />;
+  return <HomeRouter />;
 }
