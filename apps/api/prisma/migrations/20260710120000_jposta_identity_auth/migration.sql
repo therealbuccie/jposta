@@ -56,11 +56,24 @@ CREATE UNIQUE INDEX "User_personalMailboxId_key" ON "User"("personalMailboxId");
 ALTER TABLE "Mailbox" ADD COLUMN "type" "MailboxType" NOT NULL DEFAULT 'BUSINESS';
 ALTER TABLE "Mailbox" ALTER COLUMN "organizationId" DROP NOT NULL;
 ALTER TABLE "Mailbox" ALTER COLUMN "domainId" DROP NOT NULL;
-ALTER TABLE "Mailbox" ADD CONSTRAINT "User_personalMailboxId_fkey" FOREIGN KEY ("personalMailboxId") REFERENCES "Mailbox"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
+ALTER TABLE "User" ADD CONSTRAINT "User_personalMailboxId_fkey"
+FOREIGN KEY ("personalMailboxId")
+REFERENCES "Mailbox"("id")
+ON DELETE SET NULL
+ON UPDATE CASCADE;
 -- Keep business mailbox invariants at the database level while allowing personal @jposta.com mailboxes.
-ALTER TABLE "Mailbox" ADD CONSTRAINT "Mailbox_business_requires_org_domain" CHECK (
-  ("type" = 'BUSINESS' AND "organizationId" IS NOT NULL AND "domainId" IS NOT NULL)
+ALTER TABLE "Mailbox"
+ADD CONSTRAINT "Mailbox_business_requires_org_domain"
+CHECK (
+  (
+    "type" = 'BUSINESS'
+    AND "organizationId" IS NOT NULL
+    AND "domainId" IS NOT NULL
+  )
   OR
-  ("type" = 'PERSONAL')
+  (
+    "type" = 'PERSONAL'
+    AND "organizationId" IS NULL
+    AND "domainId" IS NULL
+  )
 );
