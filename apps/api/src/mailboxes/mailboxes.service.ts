@@ -1,23 +1,58 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { DomainStatus, MailboxStatus } from "@prisma/client";
 
 import type { AuthenticatedUser } from "../auth/auth.types";
+import { MailProvisioningService } from "../mail-provisioning/mail-provisioning.service";
 import { OrganizationsService } from "../organizations/organizations.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { normalizeMailboxLocalPart } from "./mailbox.utils";
 
 type CreateMailboxInput = {
   displayName?: string;
   domainId?: string;
   localPart?: string;
   organizationId?: string;
+  password?: string;
+  quotaMb?: number;
   userId?: string;
+};
+
+type PasswordInput = {
+  password?: string;
 };
 
 @Injectable()
 export class MailboxesService {
   constructor(
+    private readonly mailProvisioningService: MailProvisioningService,
     private readonly organizationsService: OrganizationsService,
     private readonly prisma: PrismaService,
   ) {}
+
+  async list(user: AuthenticatedUser) {
+    return this.prisma.mailbox.findMany({
+      where: {
+        organization: {
+          ownerId: user.id,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        domain: true,
+        organization: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+  }
 
   async create(input: CreateMailboxInput, user: AuthenticatedUser) {
     const organization = await this.organizationsService.ensureOwnedByUser(
@@ -36,31 +71,125 @@ export class MailboxesService {
       throw new NotFoundException("Domain not found for this organization.");
     }
 
-    const localPart = normalizeLocalPart(input.localPart);
-    const displayName = input.displayName?.trim() || localPart;
+    if (domain.status !== DomainStatus.VERIFIED && domain.status !== DomainStatus.ACTIVE) {
+      throw new BadRequestException("Domain must be verified before creating mailboxes.");
+    }
 
-    return this.prisma.mailbox.create({
+    const localPart = normalizeMailboxLocalPart(input.localPart);
+    const password = requirePassword(input.password);
+    const displayName = input.displayName?.trim() || localPart;
+    const quotaMb = normalizeQuota(input.quotaMb);
+    const address = `${localPart}@${domain.name}`;
+    const existingMailbox = await this.prisma.mailbox.findUnique({ where: { address } });
+
+    if (existingMailbox) {
+      throw new ConflictException("Mailbox address already exists.");
+    }
+
+    const mailbox = await this.prisma.mailbox.create({
       data: {
-        address: `${localPart}@${domain.name}`,
+        address,
         displayName,
+        status: MailboxStatus.PROVISIONING,
+        quotaMb,
         organizationId: organization.id,
         domainId: domain.id,
         userId: input.userId || user.id,
       },
-      include: {
-        domain: true,
-        organization: true,
-        user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-          },
+    });
+
+    try {
+      await this.mailProvisioningService.createMailbox({ address, password, quotaMb });
+      return this.prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: {
+          status: MailboxStatus.ACTIVE,
+          provisioningError: null,
+        },
+        include: mailboxInclude,
+      });
+    } catch (error) {
+      await this.prisma.mailbox.update({
+        where: { id: mailbox.id },
+        data: {
+          status: MailboxStatus.FAILED,
+          provisioningError: error instanceof Error ? error.message : "Provisioning failed.",
+        },
+      });
+      throw error;
+    }
+  }
+
+  async updatePassword(id: string, input: PasswordInput, user: AuthenticatedUser) {
+    const mailbox = await this.getOwnedMailbox(id, user.id);
+    const password = requirePassword(input.password);
+
+    await this.mailProvisioningService.updatePassword(mailbox.address, password);
+
+    return this.prisma.mailbox.update({
+      where: { id: mailbox.id },
+      data: {
+        provisioningError: null,
+      },
+      include: mailboxInclude,
+    });
+  }
+
+  async suspend(id: string, user: AuthenticatedUser) {
+    const mailbox = await this.getOwnedMailbox(id, user.id);
+
+    return this.prisma.mailbox.update({
+      where: { id: mailbox.id },
+      data: {
+        status: MailboxStatus.SUSPENDED,
+      },
+      include: mailboxInclude,
+    });
+  }
+
+  async delete(id: string, user: AuthenticatedUser) {
+    const mailbox = await this.getOwnedMailbox(id, user.id);
+
+    await this.mailProvisioningService.deleteMailbox(mailbox.address);
+    await this.prisma.mailbox.delete({ where: { id: mailbox.id } });
+
+    return { deleted: true };
+  }
+
+  private async getOwnedMailbox(id: string, userId: string) {
+    const mailbox = await this.prisma.mailbox.findFirst({
+      where: {
+        id,
+        organization: {
+          ownerId: userId,
         },
       },
     });
+
+    if (!mailbox) {
+      throw new NotFoundException("Mailbox not found.");
+    }
+
+    return mailbox;
   }
 }
+
+const mailboxInclude = {
+  domain: true,
+  organization: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+  user: {
+    select: {
+      id: true,
+      email: true,
+      name: true,
+    },
+  },
+} as const;
 
 function requireText(value: string | undefined, field: string) {
   const text = value?.trim();
@@ -72,12 +201,20 @@ function requireText(value: string | undefined, field: string) {
   return text;
 }
 
-function normalizeLocalPart(value: string | undefined) {
-  const localPart = value?.trim().toLowerCase();
-
-  if (!localPart || !/^[a-z0-9._-]+$/.test(localPart)) {
-    throw new BadRequestException("A valid mailbox local part is required.");
+function requirePassword(value: string | undefined) {
+  if (!value || value.length < 10) {
+    throw new BadRequestException("Mailbox password must be at least 10 characters.");
   }
 
-  return localPart;
+  return value;
+}
+
+function normalizeQuota(value: number | undefined) {
+  const quota = Number(value ?? 5120);
+
+  if (!Number.isInteger(quota) || quota < 128 || quota > 102400) {
+    throw new BadRequestException("quotaMb must be an integer between 128 and 102400.");
+  }
+
+  return quota;
 }

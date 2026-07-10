@@ -31,32 +31,52 @@ model Organization {
 }
 
 model Domain {
-  id             String       @id @default(cuid())
-  name           String       @unique
-  status         DomainStatus @default(PENDING)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  mailboxes      Mailbox[]
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id                      String       @id @default(cuid())
+  name                    String       @unique
+  verificationToken       String       @unique
+  status                  DomainStatus @default(PENDING)
+  verifiedAt              DateTime?
+  lastCheckedAt           DateTime?
+  verificationError       String?
+  dkimSelector            String       @default("mail")
+  dkimPublicKey           String?
+  dkimPrivateKeyEncrypted String?
+  organizationId          String
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  mailboxes               Mailbox[]
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
 }
 
 model Mailbox {
-  id             String       @id @default(cuid())
-  address        String       @unique
-  displayName    String
-  organizationId String
-  domainId       String
-  userId         String?
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  domain         Domain       @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id                String        @id @default(cuid())
+  address           String        @unique
+  displayName       String
+  status            MailboxStatus @default(PENDING)
+  provisioningError String?
+  quotaMb           Int           @default(5120)
+  organizationId    String
+  domainId          String
+  userId            String?
+  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  domain            Domain        @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  user              User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 }
 
 enum DomainStatus {
   PENDING
+  VERIFYING
   VERIFIED
+  ACTIVE
   FAILED
+}
+
+enum MailboxStatus {
+  PENDING
+  PROVISIONING
+  ACTIVE
+  FAILED
+  SUSPENDED
 }
