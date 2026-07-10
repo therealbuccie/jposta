@@ -25,6 +25,7 @@ CREATE UNIQUE INDEX "WebmailSession_tokenHash_key" ON "WebmailSession"("tokenHas
 CREATE INDEX "WebmailSession_mailboxId_idx" ON "WebmailSession"("mailboxId");
 CREATE INDEX "WebmailSession_organizationId_idx" ON "WebmailSession"("organizationId");
 CREATE INDEX "WebmailSession_portalSlug_idx" ON "WebmailSession"("portalSlug");
+CREATE INDEX "WebmailSession_expiresAt_idx" ON "WebmailSession"("expiresAt");
 
 ALTER TABLE "WebmailSession" ADD CONSTRAINT "WebmailSession_mailboxId_fkey" FOREIGN KEY ("mailboxId") REFERENCES "Mailbox"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "WebmailSession" ADD CONSTRAINT "WebmailSession_organizationId_fkey" FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
