@@ -8,6 +8,8 @@ import {
   Post,
   Query,
   Req,
+  Res,
+  StreamableFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
@@ -147,9 +149,20 @@ export class WebmailController {
     @Req() request: WebmailRequest,
     @Param("uid") uid: string,
     @Param("partId") partId: string,
-    @Query("folder") folder?: string,
+    @Query("folder") folder: string | undefined,
+    @Res({ passthrough: true }) response: { setHeader: (name: string, value: string) => void },
   ) {
-    return this.imap.getAttachment(request.webmailSession, normalizeUid(uid), partId, folder);
+    return this.imap
+      .getAttachment(request.webmailSession, normalizeUid(uid), partId, folder)
+      .then((attachment) => {
+        response.setHeader("Content-Type", attachment.contentType);
+        response.setHeader("Content-Length", String(attachment.size));
+        response.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${attachment.filename.replace(/"/g, "")}"`,
+        );
+        return new StreamableFile(attachment.content);
+      });
   }
 
   @Post("send")
@@ -193,3 +206,4 @@ export class WebmailController {
     return this.imap.deleteDraft(request.webmailSession, normalizeUid(uid));
   }
 }
+

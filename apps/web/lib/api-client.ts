@@ -146,6 +146,30 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
   return payload as T;
 }
 
+
+export async function apiFormRequest<T>(path: string, token: string, body: FormData) {
+  const response = await fetch(`${env.apiUrl}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body,
+  });
+  const payload = (await response.json().catch(() => null)) as T | { message?: string } | null;
+  if (!response.ok) {
+    throw new Error(
+      (payload as { message?: string } | null)?.message ||
+        `Request failed with ${response.status}.`,
+    );
+  }
+  return payload as T;
+}
+
+export async function apiDownload(path: string, token: string) {
+  const response = await fetch(`${env.apiUrl}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error(`Request failed with ${response.status}.`);
+  return response;
+}
 export const jpostaApi = {
   getPortal: (slug: string) => apiRequest<PortalInfo>(`/public/portal/${encodeURIComponent(slug)}`),
   webmailLogin: (body: { email: string; password: string; portalSlug: string }) =>
@@ -191,11 +215,27 @@ export const jpostaApi = {
       token,
       body,
     }),
+  webmailSendForm: (token: string, body: FormData) =>
+    apiFormRequest<{ messageId: string; accepted: string[]; rejected: string[] }>(
+      "/webmail/send",
+      token,
+      body,
+    ),
+  webmailAttachment: (token: string, uid: number, partId: string, folder: string) =>
+    apiDownload(
+      `/webmail/messages/${uid}/attachments/${encodeURIComponent(partId)}?folder=${encodeURIComponent(folder)}`,
+      token,
+    ),
   webmailSaveDraft: (token: string, body: Record<string, unknown>, uid?: number) =>
     apiRequest<{ uid: number }>(uid ? `/webmail/drafts/${uid}` : "/webmail/drafts", {
       token,
       method: uid ? "PATCH" : "POST",
       body,
+    }),
+  webmailDeleteDraft: (token: string, uid: number) =>
+    apiRequest<{ deleted?: boolean; moved?: boolean }>(`/webmail/drafts/${uid}`, {
+      token,
+      method: "DELETE",
     }),
   webmailLogout: (token: string) =>
     apiRequest<{ revoked: boolean }>("/webmail/logout", { token, body: {} }),
@@ -246,3 +286,6 @@ export const jpostaApi = {
   deleteMailbox: (token: string, id: string) =>
     apiRequest<{ deleted: boolean }>(`/mailboxes/${id}`, { method: "DELETE", token }),
 };
+
+
+

@@ -66,10 +66,10 @@ export class WebmailImapService {
 
         let uids: number[] = [];
         if (input.search) {
-          uids = (await client.search({
-            body: String(input.search),
-            subject: String(input.search),
-          })) as number[];
+          const query = String(input.search);
+          const bodyUids = (await client.search({ body: query })) as number[];
+          const subjectUids = (await client.search({ subject: query })) as number[];
+          uids = [...new Set([...bodyUids, ...subjectUids])];
         } else if (input.unreadOnly === "true" || input.unreadOnly === true) {
           uids = (await client.search({ seen: false })) as number[];
         } else if (input.starredOnly === "true" || input.starredOnly === true) {
@@ -212,10 +212,26 @@ export class WebmailImapService {
   }
 
   async getAttachment(session: WebmailSession, uid: number, partId: string, folderValue?: string) {
-    const detail = await this.getMessage(session, uid, folderValue);
-    const attachment = detail.attachments[Number(partId)];
-    if (!attachment) throw new NotFoundException("Attachment not found.");
-    return { metadata: attachment };
+    const folder = normalizeFolderPath(folderValue);
+    return this.withClient(session, async (client) => {
+      const lock = await client.getMailboxLock(folder);
+      try {
+        const fetched = await client.fetchOne(uid, { source: true }, { uid: true });
+        if (!fetched?.source) throw new NotFoundException("Message not found.");
+        const parsed = await simpleParser(fetched.source);
+        const index = Number(partId);
+        const attachment = Number.isInteger(index) ? parsed.attachments[index] : undefined;
+        if (!attachment) throw new NotFoundException("Attachment not found.");
+        return {
+          content: attachment.content,
+          contentType: attachment.contentType || "application/octet-stream",
+          filename: sanitizeFilename(attachment.filename, `attachment-${index + 1}`),
+          size: attachment.size,
+        };
+      } finally {
+        lock.release();
+      }
+    });
   }
 
   async health() {
