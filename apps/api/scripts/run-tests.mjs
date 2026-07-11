@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const appRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const srcRoot = join(appRoot, "src");
 const distRoot = join(appRoot, "dist");
+const scriptsRoot = join(appRoot, "scripts");
 const files = [];
 
 function walk(directory) {
@@ -23,6 +24,10 @@ function walk(directory) {
 }
 
 walk(srcRoot);
+for (const entry of readdirSync(scriptsRoot)) {
+  const path = join(scriptsRoot, entry);
+  if (statSync(path).isFile() && path.endsWith(".spec.mjs")) files.push(path);
+}
 
 if (!files.length) {
   console.error("No compiled spec files found. Run pnpm --filter @jposta/api build first.");
@@ -42,3 +47,4 @@ const result = spawnSync(process.execPath, ["--test", ...files], {
   },
 });
 process.exit(result.status ?? 1);
+

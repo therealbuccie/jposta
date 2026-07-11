@@ -12,7 +12,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs",
+    "reset:test-org": "node scripts/reset-test-organization.mjs"
   },
   "dependencies": {
     "@jposta/types": "workspace:*",
