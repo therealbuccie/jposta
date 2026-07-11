@@ -35,19 +35,9 @@ export class WebmailAuthService {
     if (!mailbox) throw invalidCredentials();
 
     await authenticateImap(email, password).catch((error: unknown) => {
-      const safeError = error as {
-        code?: string;
-        responseCode?: string;
-        message?: string;
-      };
+      console.error("Webmail IMAP login failed", error);
 
-      console.error("Webmail IMAP login failed", {
-        code: safeError.code,
-        responseCode: safeError.responseCode,
-        message: safeError.message,
-      });
-
-      throw invalidCredentials();
+      throw imapAuthenticationFailed(error);
     });
 
     const webmailSessionToken = createSessionToken();
@@ -94,6 +84,21 @@ function invalidCredentials() {
   return new UnauthorizedException("Invalid email or password.");
 }
 
+function imapAuthenticationFailed(error: unknown) {
+  if (process.env.NODE_ENV === "production") return invalidCredentials();
+
+  return new UnauthorizedException(getErrorMessage(error));
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "object" && error && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message) return message;
+  }
+  return String(error || "IMAP authentication failed.");
+}
+
 async function authenticateImap(email: string, password: string) {
   const client = new ImapFlow({
     host: "mail.jposta.com",
@@ -120,4 +125,5 @@ async function authenticateImap(email: string, password: string) {
     }
   }
 }
+
 
