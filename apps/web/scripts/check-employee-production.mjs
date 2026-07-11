@@ -1,8 +1,9 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import path from "node:path";
 
-const root = new URL("..", import.meta.url).pathname.replace(/^\//, "");
-const scanRoots = [join(root, "app", "employee"), join(root, "lib")];
+const employeeDir = path.resolve(process.cwd(), "app", "employee");
+const libDir = path.resolve(process.cwd(), "lib");
+const scanRoots = [employeeDir, libDir];
 const blocked = [
   ["Alex", " Rivera"],
   ["Maya", " Chen"],
@@ -19,15 +20,15 @@ const failures = [];
 
 function walk(directory) {
   for (const entry of readdirSync(directory)) {
-    const path = join(directory, entry);
-    if (statSync(path).isDirectory()) {
-      walk(path);
+    const filePath = path.join(directory, entry);
+    if (statSync(filePath).isDirectory()) {
+      walk(filePath);
       continue;
     }
     if (!/\.(tsx?|jsx?)$/.test(path)) continue;
-    const source = readFileSync(path, "utf8");
+    const source = readFileSync(filePath, "utf8");
     for (const term of blocked) {
-      if (source.includes(term)) failures.push(`${path}: contains ${term}`);
+      if (source.includes(term)) failures.push(`${filePath}: contains ${term}`);
     }
   }
 }
@@ -39,3 +40,5 @@ if (failures.length) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exit(1);
 }
+
+
