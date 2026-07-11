@@ -11,6 +11,11 @@ RUN pnpm install --frozen-lockfile
 
 COPY apps/admin apps/admin
 
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_ADMIN_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_ADMIN_URL=$NEXT_PUBLIC_ADMIN_URL
+
 RUN pnpm --filter @jposta/admin build
 
 EXPOSE 3001
