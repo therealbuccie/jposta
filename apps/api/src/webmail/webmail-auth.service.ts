@@ -34,7 +34,19 @@ export class WebmailAuthService {
     });
     if (!mailbox) throw invalidCredentials();
 
-    await authenticateImap(email, password).catch(() => {
+    await authenticateImap(email, password).catch((error: unknown) => {
+      const safeError = error as {
+        code?: string;
+        responseCode?: string;
+        message?: string;
+      };
+
+      console.error("Webmail IMAP login failed", {
+        code: safeError.code,
+        responseCode: safeError.responseCode,
+        message: safeError.message,
+      });
+
       throw invalidCredentials();
     });
 
@@ -94,7 +106,18 @@ async function authenticateImap(email: string, password: string) {
   } as never);
   try {
     await client.connect();
+
+    if (!client.authenticated || !client.usable) {
+      throw new Error("IMAP authentication was not completed.");
+    }
   } finally {
-    await client.logout().catch(() => null);
+    if (client.usable) {
+      await client.logout().catch(() => {
+        client.close();
+      });
+    } else {
+      client.close();
+    }
   }
 }
+
