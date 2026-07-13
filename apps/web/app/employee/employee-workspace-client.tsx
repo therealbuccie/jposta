@@ -43,6 +43,7 @@ export function EmployeeWorkspaceClient() {
   const [compose, setCompose] = React.useState<ComposeState>(blankCompose);
   const [sending, setSending] = React.useState(false);
   const [savingDraft, setSavingDraft] = React.useState(false);
+  const bootstrapped = React.useRef(false);
 
   const mailbox = identity?.mailbox.address ?? "";
   const displayName = friendlyName(identity?.mailbox.displayName, mailbox);
@@ -62,16 +63,21 @@ export function EmployeeWorkspaceClient() {
   const loadMessages = React.useCallback(async (activeToken: string, nextFolder: string, nextPage = 1, nextSearch = search, keep = false) => {
     setMessagesLoading(true);
     setError(null);
+    setActiveFolder(nextFolder);
+    if (!keep) {
+      setSelected(null);
+      setSelectedUid(null);
+      setMobileDetail(false);
+      setPage({ ...blankPage, folder: nextFolder, page: nextPage });
+    }
     try {
       const params = new URLSearchParams({ folder: nextFolder, page: String(nextPage), pageSize: String(pageSize) });
       if (nextSearch.trim()) params.set("search", nextSearch.trim());
       const result = await jpostaApi.webmailMessages(activeToken, `?${params.toString()}`);
-      setPage(result);
-      setActiveFolder(result.folder);
-      if (!keep) { setSelected(null); setSelectedUid(null); setMobileDetail(false); }
+      setPage({ ...result, folder: nextFolder });
     } catch (caught) {
       if (isExpired(caught)) expire();
-      else setError("We couldn't connect to your mailbox. Please try again.");
+      else setError(caught instanceof Error ? caught.message : "We couldn't connect to your mailbox. Please try again.");
     } finally {
       setMessagesLoading(false);
     }
@@ -87,11 +93,13 @@ export function EmployeeWorkspaceClient() {
       await loadMessages(activeToken, resolveFolder(folderResult.folders, folderPath), page.page, search, keep);
     } catch (caught) {
       if (isExpired(caught)) expire();
-      else setError("We couldn't connect to your mailbox. Please try again.");
+      else setError(caught instanceof Error ? caught.message : "We couldn't connect to your mailbox. Please try again.");
     }
   }, [activeFolder, expire, loadMessages, page.page, search, token]);
 
   React.useEffect(() => {
+    if (bootstrapped.current) return;
+    bootstrapped.current = true;
     const stored = getStoredWebmailSession();
     if (!stored) { setLoading(false); setError("Loading your mailbox failed. Please sign in from your company portal."); return; }
     setToken(stored.token);
@@ -435,6 +443,4 @@ function isExpired(error: unknown) { return error instanceof Error && /401|sessi
 function LoadingList() { return <div className="grid gap-2" aria-label="Loading your mailbox">{Array.from({ length: 6 }).map((_, index) => <div className="h-24 animate-pulse rounded-[1.25rem] border border-glass-edge/20 bg-white/62" key={index} />)}</div>; }
 function StateNotice({ message, tone = "info" }: { message: string; tone?: Notice["tone"] }) { return <GlassCard className={`p-4 text-sm ${tone === "error" ? "text-rose-700" : "text-muted-foreground"}`} intensity="soft">{message}</GlassCard>; }
 function ToastNotice({ notice }: { notice: Notice }) { return <div className={`fixed right-4 top-4 z-[60] rounded-2xl border bg-white/95 px-4 py-3 text-sm shadow-glass ${notice.tone === "error" ? "border-rose-200 text-rose-800" : "border-sky-200 text-sky-800"}`}>{notice.message}</div>; }
-
-
 
