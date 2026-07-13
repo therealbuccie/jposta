@@ -53,8 +53,10 @@ export class WebmailService {
 
     try {
       await this.imapAuthenticator.authenticate(email, password);
-    } catch {
-      throw invalidCredentials();
+    } catch (error) {
+      console.error("Webmail login IMAP authentication rejected", error);
+      if (process.env.NODE_ENV === "production") throw invalidCredentials();
+      throw error;
     }
 
     const webmailSessionToken = randomBytes(32).toString("base64url");
@@ -208,3 +210,4 @@ function encryptCredential(password: string) {
   const tag = cipher.getAuthTag();
   return `${iv.toString("base64url")}.${tag.toString("base64url")}.${encrypted.toString("base64url")}`;
 }
+

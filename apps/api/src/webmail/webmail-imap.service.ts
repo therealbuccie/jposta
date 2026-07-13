@@ -37,10 +37,15 @@ type MailboxConnectionOptions = {
   socketTimeout?: number;
 };
 
+type ImapConnectionState = {
+  connected: boolean;
+};
+
 @Injectable()
 export class WebmailImapService {
   async listFolders(session: WebmailSession) {
     return this.withMailboxConnection(session.mailbox.address, session.credential, async (client) => {
+      const state = getConnectionState(client);
       const folders = [] as Array<{
         name: string;
         path: string;
@@ -48,12 +53,11 @@ export class WebmailImapService {
         total: number;
         unread: number;
       }>;
-      await ensureUsableConnection(client);
+
+      await ensureUsableConnection(client, state, "LIST");
       for await (const mailbox of client.list()) {
-        await ensureUsableConnection(client);
-        const status = await client
-          .status(mailbox.path, { messages: true, unseen: true })
-          .catch(() => null);
+        await ensureUsableConnection(client, state, "STATUS");
+        const status = await client.status(mailbox.path, { messages: true, unseen: true });
         folders.push({
           path: mailbox.path,
           name: mailbox.name || mailbox.path,
@@ -62,6 +66,7 @@ export class WebmailImapService {
           unread: Number(status?.unseen || 0),
         });
       }
+
       return {
         folders: folders.sort(
           (a, b) => folderRank(a) - folderRank(b) || a.name.localeCompare(b.name),
@@ -74,28 +79,30 @@ export class WebmailImapService {
     const folder = normalizeFolderPath(input.folder);
     const page = normalizePage(input.page);
     const pageSize = normalizePageSize(input.pageSize);
+
     return this.withMailboxConnection(
       session.mailbox.address,
       session.credential,
       async (client) => {
-        await ensureUsableConnection(client);
+        const state = getConnectionState(client);
+        await ensureUsableConnection(client, state, "SELECT");
         const mailbox = client.mailbox;
-        const total = Number(mailbox.exists || 0);
+        const total = Number(mailbox?.exists || 0);
         if (!total) return { folder, page, pageSize, total: 0, hasMore: false, messages: [] };
 
         let uids: number[] = [];
         if (input.search) {
           const query = String(input.search);
-          await ensureUsableConnection(client);
+          await ensureUsableConnection(client, state, "SEARCH");
           const bodyUids = (await client.search({ body: query })) as number[];
-          await ensureUsableConnection(client);
+          await ensureUsableConnection(client, state, "SEARCH");
           const subjectUids = (await client.search({ subject: query })) as number[];
           uids = [...new Set([...bodyUids, ...subjectUids])];
         } else if (input.unreadOnly === "true" || input.unreadOnly === true) {
-          await ensureUsableConnection(client);
+          await ensureUsableConnection(client, state, "SEARCH");
           uids = (await client.search({ seen: false })) as number[];
         } else if (input.starredOnly === "true" || input.starredOnly === true) {
-          await ensureUsableConnection(client);
+          await ensureUsableConnection(client, state, "SEARCH");
           uids = (await client.search({ flagged: true })) as number[];
         } else {
           const start = Math.max(1, total - page * pageSize + 1);
@@ -109,7 +116,8 @@ export class WebmailImapService {
             ? sorted.slice((page - 1) * pageSize, page * pageSize)
             : sorted;
         const messages = [] as unknown[];
-        await ensureUsableConnection(client);
+
+        await ensureUsableConnection(client, state, "FETCH");
         for await (const message of client.fetch(
           pageUids,
           { envelope: true, flags: true, bodyStructure: true, uid: true },
@@ -117,6 +125,7 @@ export class WebmailImapService {
         )) {
           messages.push(toListMessage(message));
         }
+
         return {
           folder,
           page,
@@ -138,7 +147,8 @@ export class WebmailImapService {
       session.mailbox.address,
       session.credential,
       async (client) => {
-        await ensureUsableConnection(client);
+        const state = getConnectionState(client);
+        await ensureUsableConnection(client, state, "FETCH");
         const fetched = await client.fetchOne(
           uid,
           { source: true, envelope: true, flags: true, uid: true },
@@ -201,7 +211,8 @@ export class WebmailImapService {
       session.mailbox.address,
       session.credential,
       async (client) => {
-        await ensureUsableConnection(client);
+        const state = getConnectionState(client);
+        await ensureUsableConnection(client, state, "MOVE");
         await client.messageMove(uid, toFolder, { uid: true });
         return { moved: true, fromFolder, toFolder, uid };
       },
@@ -217,7 +228,8 @@ export class WebmailImapService {
       session.mailbox.address,
       session.credential,
       async (client) => {
-        await ensureUsableConnection(client);
+        const state = getConnectionState(client);
+        await ensureUsableConnection(client, state, "EXPUNGE");
         await client.messageDelete(uid, { uid: true });
         return { deleted: true, permanent: true, uid };
       },
@@ -230,11 +242,12 @@ export class WebmailImapService {
       session.mailbox.address,
       session.credential,
       async (client) => {
+        const state = getConnectionState(client);
         if (uid) {
-          await ensureUsableConnection(client);
+          await ensureUsableConnection(client, state, "EXPUNGE");
           await client.messageDelete(uid, { uid: true }).catch(() => null);
         }
-        await ensureUsableConnection(client);
+        await ensureUsableConnection(client, state, "APPEND");
         const result = await client.append("Drafts", rawMessage, ["\\Draft"]);
         return { uid: Number(result.uid || 0) };
       },
@@ -252,7 +265,8 @@ export class WebmailImapService {
       session.mailbox.address,
       session.credential,
       async (client) => {
-        await ensureUsableConnection(client);
+        const state = getConnectionState(client);
+        await ensureUsableConnection(client, state, "FETCH");
         const fetched = await client.fetchOne(uid, { source: true }, { uid: true });
         if (!fetched?.source) throw new NotFoundException("Message not found.");
         const parsed = await simpleParser(fetched.source);
@@ -272,8 +286,11 @@ export class WebmailImapService {
 
   async health() {
     const client = this.createImapClient("healthcheck", "healthcheck", 3000);
+    const state: ImapConnectionState = { connected: false };
+    setConnectionState(client, state);
+    attachImapErrorHandlers(client);
     try {
-      await ensureUsableConnection(client);
+      await ensureUsableConnection(client, state, "CONNECT");
       return true;
     } catch {
       return false;
@@ -294,7 +311,8 @@ export class WebmailImapService {
       session.mailbox.address,
       session.credential,
       async (client) => {
-        await ensureUsableConnection(client);
+        const state = getConnectionState(client);
+        await ensureUsableConnection(client, state, "STORE");
         if (enabled) await client.messageFlagsAdd(uid, [flag], { uid: true });
         else await client.messageFlagsRemove(uid, [flag], { uid: true });
         return { uid, folder, updated: true };
@@ -310,17 +328,20 @@ export class WebmailImapService {
     options: MailboxConnectionOptions = {},
   ) {
     const client = this.createImapClient(mailbox, password, options.socketTimeout ?? 12000);
+    const state: ImapConnectionState = { connected: false };
+    setConnectionState(client, state);
+    attachImapErrorHandlers(client);
     let lock: MailboxLock | undefined;
 
     try {
-      await ensureUsableConnection(client);
+      await ensureUsableConnection(client, state, "CONNECT");
 
       if (options.lockFolder) {
-        await ensureUsableConnection(client);
+        await ensureUsableConnection(client, state, "SELECT");
         lock = (await client.getMailboxLock(options.lockFolder)) as MailboxLock;
       }
 
-      await ensureUsableConnection(client);
+      await ensureUsableConnection(client, state, "CALLBACK");
       return await callback(client);
     } catch (error) {
       throw toWebmailHttpException(error);
@@ -330,21 +351,57 @@ export class WebmailImapService {
     }
   }
 
-  private createImapClient(mailbox: string, password: string, socketTimeout: number) {
+  protected createImapClient(mailbox: string, password: string, socketTimeout: number) {
+    const host = process.env.WEBMAIL_IMAP_HOST || process.env.IMAP_HOST || "mail.jposta.com";
+    const port = Number.parseInt(process.env.WEBMAIL_IMAP_PORT || process.env.IMAP_PORT || "993", 10);
     return new ImapFlow({
-      host: "mail.jposta.com",
-      port: 993,
+      host,
+      port: Number.isInteger(port) ? port : 993,
       secure: true,
       auth: { user: mailbox, pass: password },
-      tls: { servername: "mail.jposta.com", rejectUnauthorized: true },
+      tls: {
+        servername:
+          process.env.WEBMAIL_IMAP_SERVERNAME || process.env.IMAP_SERVERNAME || host,
+        rejectUnauthorized: process.env.WEBMAIL_IMAP_REJECT_UNAUTHORIZED !== "false",
+      },
       logger: false,
       socketTimeout,
     } as never) as ImapClient;
   }
 }
 
-async function ensureUsableConnection(client: ImapClient) {
-  if (!client.usable) await client.connect();
+const connectionStates = new WeakMap<object, ImapConnectionState>();
+
+function setConnectionState(client: ImapClient, state: ImapConnectionState) {
+  if (typeof client === "object" && client) connectionStates.set(client, state);
+}
+
+function getConnectionState(client: ImapClient) {
+  if (typeof client === "object" && client) return connectionStates.get(client) ?? { connected: false };
+  return { connected: false };
+}
+
+async function ensureUsableConnection(client: ImapClient, state: ImapConnectionState, command: string) {
+  if (client.usable) return;
+  if (!state.connected) {
+    await client.connect();
+    state.connected = true;
+    if (client.usable) return;
+  }
+
+  const error = new Error(`IMAP connection is not usable before ${command}.`);
+  (error as Error & { code?: string }).code = "NoConnection";
+  throw error;
+}
+
+function attachImapErrorHandlers(client: ImapClient) {
+  if (!client || typeof client.on !== "function") return;
+  client.on("error", (error: unknown) => {
+    console.error("Webmail IMAP client emitted an error", summarizeImapError(error));
+  });
+  client.on("close", () => {
+    console.warn("Webmail IMAP client connection closed");
+  });
 }
 
 function releaseMailboxLock(lock: MailboxLock) {
@@ -387,6 +444,18 @@ function destroyImapClient(client: ImapClient) {
   }
 }
 
+function summarizeImapError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      code: (error as Error & { code?: unknown }).code,
+      responseCode: (error as Error & { responseCode?: unknown }).responseCode,
+    };
+  }
+  return error;
+}
+
 function toWebmailHttpException(error: unknown) {
   if (error instanceof HttpException) return error;
 
@@ -398,7 +467,7 @@ function toWebmailHttpException(error: unknown) {
     return new HttpException("Mailbox authentication failed.", HttpStatus.UNAUTHORIZED);
   }
 
-  if (/NoConnection|ConnectionClosed|connection not available|connection closed|timeout|timed out|ETIMEDOUT|ECONNRESET|EPIPE/i.test(value)) {
+  if (/NoConnection|ConnectionClosed|SocketError|connection not available|connection closed|socket error|timeout|timed out|ETIMEDOUT|ECONNRESET|EPIPE/i.test(value)) {
     return new ServiceUnavailableException("Mail storage is temporarily unavailable.");
   }
 
@@ -457,4 +526,3 @@ function folderRank(folder: { name: string; path: string; specialUse?: string })
   if (value.includes("archive")) return 5;
   return 10;
 }
-
