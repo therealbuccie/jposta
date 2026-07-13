@@ -30,7 +30,7 @@ type ListMessagesInput = {
 
 type ImapClient = any;
 
-type MailboxLock = { release: () => void };
+type MailboxLock = { release: () => void | Promise<void> };
 
 type MailboxConnectionOptions = {
   lockFolder?: string;
@@ -293,14 +293,21 @@ export class WebmailImapService {
     const state: ImapConnectionState = { connected: false };
     setConnectionState(client, state);
     attachImapErrorHandlers(client);
+    let completed = false;
+    logImapLifecycle("health", "operation started", client);
     try {
       await ensureUsableConnection(client, state, "CONNECT");
+      logImapLifecycle("health", "connected", client);
+      completed = true;
       return true;
     } catch {
       return false;
     } finally {
-      logImapCleanupState("health", client);
-      safelyDestroyImapClient(client);
+      await cleanupImapClient(client, {
+        operation: "health",
+        operationCompleted: completed,
+        lockReleased: true,
+      });
     }
   }
 
@@ -338,22 +345,37 @@ export class WebmailImapService {
     attachImapErrorHandlers(client);
     let lock: MailboxLock | undefined;
 
+    const operation = options.lockFolder ? `mailbox:${options.lockFolder}` : "mailbox:list-folders";
+    let completed = false;
+    let lockReleased = false;
+
+    logImapLifecycle(operation, "operation started", client);
     try {
       await ensureUsableConnection(client, state, "CONNECT");
+      logImapLifecycle(operation, "connected", client);
 
       if (options.lockFolder) {
         await ensureUsableConnection(client, state, "SELECT");
         lock = (await client.getMailboxLock(options.lockFolder)) as MailboxLock;
+        logImapLifecycle(operation, "lock acquired", client);
       }
 
       await ensureUsableConnection(client, state, "CALLBACK");
-      return await callback(client);
+      const result = await callback(client);
+      completed = true;
+      logImapLifecycle(operation, "callback completed", client);
+      return result;
     } catch (error) {
       throw toWebmailHttpException(error);
     } finally {
-      if (lock) releaseMailboxLock(lock);
-      logImapCleanupState("mailbox-operation", client);
-      safelyDestroyImapClient(client);
+      if (lock) {
+        lockReleased = await releaseMailboxLock(lock, operation, client);
+      }
+      await cleanupImapClient(client, {
+        operation,
+        operationCompleted: completed,
+        lockReleased: !lock || lockReleased,
+      });
     }
   }
 
@@ -380,6 +402,7 @@ export class WebmailImapService {
       },
       logger: false,
       socketTimeout,
+      disableAutoIdle: true,
     } as never) as ImapClient;
   }
 }
@@ -423,34 +446,95 @@ function attachImapErrorHandlers(client: ImapClient) {
   });
 }
 
-function releaseMailboxLock(lock: MailboxLock) {
+async function releaseMailboxLock(lock: MailboxLock, operation: string, client: ImapClient) {
+  logImapLifecycle(operation, "lock releasing", client);
   try {
-    lock.release();
-  } catch {
-    // Lock release is best-effort; the connection cleanup below still runs.
+    await Promise.resolve(lock.release());
+    await settleImapMicrotasks();
+    logImapLifecycle(operation, "lock released", client);
+    return true;
+  } catch (error) {
+    console.warn("Webmail IMAP mailbox lock release failed", {
+      operation,
+      error: summarizeImapError(error),
+    });
+    logImapLifecycle(operation, "lock released", client);
+    return false;
   }
 }
 
-function safelyDestroyImapClient(client: ImapClient) {
-  try {
-    const socket = client?.socket ?? client?._socket ?? client?._connection?.socket;
-    if (socket && !socket.destroyed) {
-      socket.removeAllListeners?.();
-      socket.destroy?.();
+async function cleanupImapClient(
+  client: ImapClient,
+  state: { operation: string; operationCompleted: boolean; lockReleased: boolean },
+) {
+  clearImapIdleTimers(client);
+  logImapLifecycle(state.operation, "cleanup starting", client, state);
+
+  const socket = getImapSocket(client);
+  const canLogout = Boolean(
+    state.operationCompleted && state.lockReleased && client?.usable && socket && !socket.destroyed,
+  );
+
+  if (canLogout) {
+    logImapLifecycle(state.operation, "logout selected", client, state);
+    try {
+      await client.logout();
+      await settleImapMicrotasks();
+      logImapLifecycle(state.operation, "cleanup completed", client, state);
+      return;
+    } catch (error) {
+      console.warn("Webmail IMAP logout failed during cleanup", {
+        operation: state.operation,
+        error: summarizeImapError(error),
+      });
     }
+  }
+
+  logImapLifecycle(state.operation, "socket destroy selected", client, state);
+  safelyDestroyImapSocket(client);
+  logImapLifecycle(state.operation, "cleanup completed", client, state);
+}
+
+function clearImapIdleTimers(client: ImapClient) {
+  try {
+    clearTimeout(client?.idleStartTimer);
+    client.idleStartTimer = false;
+  } catch {
+    // Timer cleanup is best-effort only.
+  }
+}
+
+function safelyDestroyImapSocket(client: ImapClient) {
+  try {
+    const socket = getImapSocket(client);
+    if (socket && !socket.destroyed) socket.destroy?.();
   } catch {
     // Cleanup must never escape and must never call an IMAP command.
   }
 }
 
-function logImapCleanupState(operation: string, client: ImapClient) {
-  const socket = client?.socket ?? client?._socket ?? client?._connection?.socket;
-  console.info("Webmail IMAP cleanup", {
+function getImapSocket(client: ImapClient) {
+  return client?.socket ?? client?._socket ?? client?._connection?.socket;
+}
+
+async function settleImapMicrotasks() {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+function logImapLifecycle(
+  operation: string,
+  event: string,
+  client: ImapClient,
+  extra: Record<string, unknown> = {},
+) {
+  const socket = getImapSocket(client);
+  console.info(`Webmail IMAP lifecycle: ${event}`, {
     operation,
     connected: Boolean(client?.authenticated || client?.usable),
     authenticated: Boolean(client?.authenticated),
     usable: Boolean(client?.usable),
     socketDestroyed: Boolean(socket?.destroyed),
+    ...extra,
   });
 }
 
