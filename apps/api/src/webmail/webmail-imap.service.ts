@@ -5,7 +5,8 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { ImapFlow } from "imapflow";
+import { EventEmitter } from "node:events";
+import type { Readable } from "node:stream";
 import { simpleParser } from "mailparser";
 
 import type { WebmailSessionService } from "./webmail-session.service";
@@ -16,6 +17,10 @@ import {
   sanitizeEmailHtml,
   sanitizeFilename,
 } from "./webmail.utils";
+
+const NodeImap = require("node-imap") as new (config: Record<string, unknown>) => ImapClient;
+
+const defaultOperationTimeoutMs = 12000;
 
 type WebmailSession = Awaited<ReturnType<WebmailSessionService["getSession"]>>;
 
@@ -28,55 +33,100 @@ type ListMessagesInput = {
   unreadOnly?: unknown;
 };
 
-type ImapClient = any;
-
-type MailboxLock = { release: () => void | Promise<void> };
-
 type MailboxConnectionOptions = {
-  lockFolder?: string;
-  socketTimeout?: number;
+  folder?: string;
+  readOnly?: boolean;
+  timeoutMs?: number;
 };
 
-type ImapConnectionState = {
-  connected: boolean;
+type FolderInfo = {
+  name: string;
+  path: string;
+  specialUse?: string;
+  total: number;
+  unread: number;
 };
+
+type ParsedFetchedMessage = {
+  uid: number;
+  flags: string[];
+  raw: Buffer;
+  struct?: unknown;
+};
+
+type ImapClient = EventEmitter & {
+  connect: () => void;
+  end: () => void;
+  destroy?: () => void;
+  state?: string;
+  openBox: (
+    name: string,
+    readOnly: boolean,
+    callback: (error: Error | null, box: ImapBox) => void,
+  ) => void;
+  getBoxes: (callback: (error: Error | null, boxes: ImapBoxes) => void) => void;
+  status: (name: string, callback: (error: Error | null, box: ImapBox) => void) => void;
+  search: (criteria: unknown[], callback: (error: Error | null, uids: number[]) => void) => void;
+  fetch: (source: unknown, options: Record<string, unknown>) => ImapFetch;
+  addFlags: (source: unknown, flags: unknown, callback: (error: Error | null) => void) => void;
+  delFlags: (source: unknown, flags: unknown, callback: (error: Error | null) => void) => void;
+  move: (source: unknown, destination: string, callback: (error: Error | null) => void) => void;
+  append: (
+    message: string | Buffer,
+    options: Record<string, unknown>,
+    callback: (error: Error | null) => void,
+  ) => void;
+  expunge: (sourceOrCallback: unknown, callback?: (error: Error | null) => void) => void;
+};
+
+type ImapFetch = EventEmitter;
+
+type ImapMessage = EventEmitter;
+
+type ImapBox = {
+  name?: string;
+  messages?: { total?: number; unseen?: number; new?: number };
+};
+
+type ImapBoxes = Record<
+  string,
+  {
+    attribs?: string[];
+    delimiter?: string;
+    children?: ImapBoxes | null;
+  }
+>;
 
 @Injectable()
 export class WebmailImapService {
   async listFolders(session: WebmailSession) {
-    return this.withMailboxConnection(
-      session.mailbox.address,
-      session.credential,
-      async (client) => {
-        const state = getConnectionState(client);
-        const folders = [] as Array<{
-          name: string;
-          path: string;
-          specialUse?: string;
-          total: number;
-          unread: number;
-        }>;
+    return this.withConnection(session.mailbox.address, session.credential, async (client) => {
+      const boxes = await withTimeout(getBoxes(client), defaultOperationTimeoutMs, "LIST");
+      const flattened = flattenBoxes(boxes);
+      const folders = await Promise.all(
+        flattened.map(async (folder) => {
+          const status = await withTimeout(
+            callback<ImapBox>((done) => client.status(folder.path, done)),
+            defaultOperationTimeoutMs,
+            `STATUS ${folder.path}`,
+          ).catch(() => ({ messages: { total: 0, unseen: 0 } }) as ImapBox);
 
-        await ensureUsableConnection(client, state, "LIST");
-        for await (const mailbox of client.list()) {
-          await ensureUsableConnection(client, state, "STATUS");
-          const status = await client.status(mailbox.path, { messages: true, unseen: true });
-          folders.push({
-            path: mailbox.path,
-            name: mailbox.name || mailbox.path,
-            specialUse: mailbox.specialUse,
-            total: Number(status?.messages || 0),
-            unread: Number(status?.unseen || 0),
-          });
-        }
+          return {
+            path: folder.path,
+            name: folder.name,
+            ...(folder.specialUse ? { specialUse: folder.specialUse } : {}),
+            total: Number(status.messages?.total || 0),
+            unread: Number(status.messages?.unseen || 0),
+          } satisfies FolderInfo;
+        }),
+      );
 
-        return {
-          folders: folders.sort(
-            (a, b) => folderRank(a) - folderRank(b) || a.name.localeCompare(b.name),
-          ),
-        };
-      },
-    );
+      return {
+        folders: folders.sort(
+          (a, b) => folderRank(a) - folderRank(b) || a.name.localeCompare(b.name),
+        ),
+      };
+    });
   }
 
   async listMessages(session: WebmailSession, input: ListMessagesInput) {
@@ -84,104 +134,50 @@ export class WebmailImapService {
     const page = normalizePage(input.page);
     const pageSize = normalizePageSize(input.pageSize);
 
-    return this.withMailboxConnection(
+    return this.withConnection(
       session.mailbox.address,
       session.credential,
-      async (client) => {
-        const state = getConnectionState(client);
-        await ensureUsableConnection(client, state, "SELECT");
-        const mailbox = client.mailbox;
-        const total = Number(mailbox?.exists || 0);
+      async (client, box) => {
+        const total = Number(box?.messages?.total || 0);
         if (!total) return { folder, page, pageSize, total: 0, hasMore: false, messages: [] };
 
-        let uids: number[] = [];
-        if (input.search) {
-          const query = String(input.search);
-          await ensureUsableConnection(client, state, "SEARCH");
-          const bodyUids = (await client.search({ body: query })) as number[];
-          await ensureUsableConnection(client, state, "SEARCH");
-          const subjectUids = (await client.search({ subject: query })) as number[];
-          uids = [...new Set([...bodyUids, ...subjectUids])];
-        } else if (input.unreadOnly === "true" || input.unreadOnly === true) {
-          await ensureUsableConnection(client, state, "SEARCH");
-          uids = (await client.search({ seen: false })) as number[];
-        } else if (input.starredOnly === "true" || input.starredOnly === true) {
-          await ensureUsableConnection(client, state, "SEARCH");
-          uids = (await client.search({ flagged: true })) as number[];
-        } else {
-          const start = Math.max(1, total - page * pageSize + 1);
-          const end = Math.max(1, total - (page - 1) * pageSize);
-          uids = Array.from({ length: end - start + 1 }, (_, index) => start + index);
-        }
-
+        const criteria = buildSearchCriteria(input);
+        const uids = await withTimeout(
+          search(client, criteria),
+          defaultOperationTimeoutMs,
+          "SEARCH",
+        );
         const sorted = [...uids].sort((a, b) => b - a);
-        const pageUids =
-          input.search || input.unreadOnly || input.starredOnly
-            ? sorted.slice((page - 1) * pageSize, page * pageSize)
-            : sorted;
-        const messages = [] as unknown[];
-
-        await ensureUsableConnection(client, state, "FETCH");
-        for await (const message of client.fetch(
-          pageUids,
-          { envelope: true, flags: true, bodyStructure: true, uid: true },
-          { uid: true },
-        )) {
-          messages.push(toListMessage(message));
-        }
+        const pageUids = sorted.slice((page - 1) * pageSize, page * pageSize);
+        const fetched = await fetchMessages(client, pageUids, { bodies: "", struct: true });
+        const messages = await Promise.all(fetched.map(toListMessage));
 
         return {
           folder,
           page,
           pageSize,
-          total: input.search || input.unreadOnly || input.starredOnly ? sorted.length : total,
+          total: criteria.length === 1 && criteria[0] === "ALL" ? total : sorted.length,
           hasMore:
             page * pageSize <
-            (input.search || input.unreadOnly || input.starredOnly ? sorted.length : total),
-          messages,
+            (criteria.length === 1 && criteria[0] === "ALL" ? total : sorted.length),
+          messages: messages.sort((a, b) => Number(b.uid || 0) - Number(a.uid || 0)),
         };
       },
-      { lockFolder: folder },
+      { folder, readOnly: true },
     );
   }
 
   async getMessage(session: WebmailSession, uid: number, folderValue?: string) {
     const folder = normalizeFolderPath(folderValue);
-    return this.withMailboxConnection(
+    return this.withConnection(
       session.mailbox.address,
       session.credential,
       async (client) => {
-        const state = getConnectionState(client);
-        await ensureUsableConnection(client, state, "FETCH");
-        const fetched = await client.fetchOne(
-          uid,
-          { source: true, envelope: true, flags: true, uid: true },
-          { uid: true },
-        );
-        if (!fetched?.source) throw new NotFoundException("Message not found.");
-        const parsed = await simpleParser(fetched.source);
-        return {
-          uid,
-          messageId: parsed.messageId || fetched.envelope?.messageId || "",
-          from: addressText(parsed.from),
-          to: addressText(parsed.to),
-          cc: addressText(parsed.cc),
-          bcc: addressText(parsed.bcc),
-          subject: parsed.subject || "(No subject)",
-          date: parsed.date?.toISOString() || null,
-          text: parsed.text || "",
-          sanitizedHtml: sanitizeEmailHtml(parsed.html || undefined),
-          attachments: parsed.attachments.map((attachment, index) => ({
-            partId: String(index),
-            filename: sanitizeFilename(attachment.filename, `attachment-${index + 1}`),
-            contentType: attachment.contentType,
-            size: attachment.size,
-          })),
-          unread: !hasFlag(fetched.flags, "\\Seen"),
-          starred: hasFlag(fetched.flags, "\\Flagged"),
-        };
+        const fetched = await fetchOneMessage(client, uid, { bodies: "", struct: true });
+        if (!fetched?.raw) throw new NotFoundException("Message not found.");
+        return toDetailMessage(fetched);
       },
-      { lockFolder: folder },
+      { folder, readOnly: true },
     );
   }
 
@@ -211,16 +207,18 @@ export class WebmailImapService {
   ) {
     const fromFolder = normalizeFolderPath(fromFolderValue);
     const toFolder = normalizeFolderPath(toFolderValue);
-    return this.withMailboxConnection(
+    return this.withConnection(
       session.mailbox.address,
       session.credential,
       async (client) => {
-        const state = getConnectionState(client);
-        await ensureUsableConnection(client, state, "MOVE");
-        await client.messageMove(uid, toFolder, { uid: true });
+        await withTimeout(
+          callback<void>((done) => client.move(uid, toFolder, done)),
+          defaultOperationTimeoutMs,
+          "MOVE",
+        );
         return { moved: true, fromFolder, toFolder, uid };
       },
-      { lockFolder: fromFolder },
+      { folder: fromFolder, readOnly: false },
     );
   }
 
@@ -228,52 +226,72 @@ export class WebmailImapService {
     const folder = normalizeFolderPath(folderValue);
     const isTrash = /trash|deleted/i.test(folder);
     if (!isTrash) return this.move(session, uid, folder, "Trash");
-    return this.withMailboxConnection(
+
+    return this.withConnection(
       session.mailbox.address,
       session.credential,
       async (client) => {
-        const state = getConnectionState(client);
-        await ensureUsableConnection(client, state, "EXPUNGE");
-        await client.messageDelete(uid, { uid: true });
+        await withTimeout(
+          callback<void>((done) => client.addFlags(uid, "\\Deleted", done)),
+          defaultOperationTimeoutMs,
+          "STORE",
+        );
+        await withTimeout(expunge(client, uid), defaultOperationTimeoutMs, "EXPUNGE");
         return { deleted: true, permanent: true, uid };
       },
-      { lockFolder: folder },
+      { folder, readOnly: false },
     );
   }
 
   async saveDraft(session: WebmailSession, rawMessage: string, uid?: number) {
-    return this.withMailboxConnection(
+    return this.withConnection(
       session.mailbox.address,
       session.credential,
       async (client) => {
-        const state = getConnectionState(client);
         if (uid) {
-          await ensureUsableConnection(client, state, "EXPUNGE");
-          await client.messageDelete(uid, { uid: true }).catch(() => null);
+          await callback<void>((done) => client.addFlags(uid, "\\Deleted", done)).catch(() => null);
+          await expunge(client, uid).catch(() => null);
         }
-        await ensureUsableConnection(client, state, "APPEND");
-        const result = await client.append("Drafts", rawMessage, ["\\Draft"]);
-        return { uid: Number(result.uid || 0) };
+
+        await withTimeout(
+          callback<void>((done) =>
+            client.append(rawMessage, { mailbox: "Drafts", flags: ["\\Draft"] }, done),
+          ),
+          defaultOperationTimeoutMs,
+          "APPEND",
+        );
+        return { uid: 0 };
       },
-      { lockFolder: "Drafts" },
+      { folder: "Drafts", readOnly: false },
     );
   }
 
   async deleteDraft(session: WebmailSession, uid: number) {
-    return this.delete(session, uid, "Drafts");
+    return this.withConnection(
+      session.mailbox.address,
+      session.credential,
+      async (client) => {
+        await withTimeout(
+          callback<void>((done) => client.addFlags(uid, "\\Deleted", done)),
+          defaultOperationTimeoutMs,
+          "STORE",
+        );
+        await withTimeout(expunge(client, uid), defaultOperationTimeoutMs, "EXPUNGE");
+        return { deleted: true, permanent: true, uid };
+      },
+      { folder: "Drafts", readOnly: false },
+    );
   }
 
   async getAttachment(session: WebmailSession, uid: number, partId: string, folderValue?: string) {
     const folder = normalizeFolderPath(folderValue);
-    return this.withMailboxConnection(
+    return this.withConnection(
       session.mailbox.address,
       session.credential,
       async (client) => {
-        const state = getConnectionState(client);
-        await ensureUsableConnection(client, state, "FETCH");
-        const fetched = await client.fetchOne(uid, { source: true }, { uid: true });
-        if (!fetched?.source) throw new NotFoundException("Message not found.");
-        const parsed = await simpleParser(fetched.source);
+        const fetched = await fetchOneMessage(client, uid, { bodies: "" });
+        if (!fetched?.raw) throw new NotFoundException("Message not found.");
+        const parsed = await simpleParser(fetched.raw);
         const index = Number(partId);
         const attachment = Number.isInteger(index) ? parsed.attachments[index] : undefined;
         if (!attachment) throw new NotFoundException("Attachment not found.");
@@ -284,31 +302,43 @@ export class WebmailImapService {
           size: attachment.size,
         };
       },
-      { lockFolder: folder },
+      { folder, readOnly: true },
     );
   }
 
   async health() {
-    const client = this.createImapClient("healthcheck", "healthcheck", 3000);
-    const state: ImapConnectionState = { connected: false };
-    setConnectionState(client, state);
-    attachImapErrorHandlers(client);
-    let completed = false;
-    logImapLifecycle("health", "operation started", client);
-    try {
-      await ensureUsableConnection(client, state, "CONNECT");
-      logImapLifecycle("health", "connected", client);
-      completed = true;
-      return true;
-    } catch {
-      return false;
-    } finally {
-      await cleanupImapClient(client, {
-        operation: "health",
-        operationCompleted: completed,
-        lockReleased: true,
-      });
-    }
+    return this.withConnection("healthcheck", "healthcheck", async () => true, {
+      timeoutMs: 3000,
+    }).catch(() => false);
+  }
+
+  protected createImapClient(mailbox: string, password: string, timeoutMs: number) {
+    const host = process.env.IMAP_HOST || process.env.WEBMAIL_IMAP_HOST || "jposta-mailserver";
+    const port = Number.parseInt(
+      process.env.IMAP_PORT || process.env.WEBMAIL_IMAP_PORT || "993",
+      10,
+    );
+    const secure =
+      (process.env.IMAP_SECURE || process.env.WEBMAIL_IMAP_SECURE || "true") !== "false";
+
+    return new NodeImap({
+      user: mailbox,
+      password,
+      host,
+      port: Number.isInteger(port) ? port : 993,
+      tls: secure,
+      tlsOptions: {
+        servername:
+          process.env.IMAP_TLS_SERVERNAME ||
+          process.env.WEBMAIL_IMAP_SERVERNAME ||
+          process.env.IMAP_SERVERNAME ||
+          "mail.jposta.com",
+        rejectUnauthorized: process.env.WEBMAIL_IMAP_REJECT_UNAUTHORIZED !== "false",
+      },
+      connTimeout: timeoutMs,
+      authTimeout: timeoutMs,
+      keepalive: false,
+    }) as ImapClient;
   }
 
   private async updateFlag(
@@ -319,223 +349,341 @@ export class WebmailImapService {
     enabled: boolean,
   ) {
     const folder = normalizeFolderPath(folderValue);
-    return this.withMailboxConnection(
+    return this.withConnection(
       session.mailbox.address,
       session.credential,
       async (client) => {
-        const state = getConnectionState(client);
-        await ensureUsableConnection(client, state, "STORE");
-        if (enabled) await client.messageFlagsAdd(uid, [flag], { uid: true });
-        else await client.messageFlagsRemove(uid, [flag], { uid: true });
+        await withTimeout(
+          callback<void>((done) => {
+            if (enabled) client.addFlags(uid, flag, done);
+            else client.delFlags(uid, flag, done);
+          }),
+          defaultOperationTimeoutMs,
+          "STORE",
+        );
         return { uid, folder, updated: true };
       },
-      { lockFolder: folder },
+      { folder, readOnly: false },
     );
   }
 
-  private async withMailboxConnection<T>(
+  private async withConnection<T>(
     mailbox: string,
     password: string,
-    callback: (client: ImapClient) => Promise<T>,
+    callbackFn: (client: ImapClient, box?: ImapBox) => Promise<T>,
     options: MailboxConnectionOptions = {},
   ) {
-    const client = this.createImapClient(mailbox, password, options.socketTimeout ?? 12000);
-    const state: ImapConnectionState = { connected: false };
-    setConnectionState(client, state);
-    attachImapErrorHandlers(client);
-    let lock: MailboxLock | undefined;
+    const timeoutMs = options.timeoutMs ?? defaultOperationTimeoutMs;
+    const client = this.createImapClient(mailbox, password, timeoutMs);
+    const errors: unknown[] = [];
+    let ended = false;
 
-    const operation = options.lockFolder ? `mailbox:${options.lockFolder}` : "mailbox:list-folders";
-    let completed = false;
-    let lockReleased = false;
+    const onError = (error: unknown) => {
+      errors.push(error);
+      console.error("Webmail node-imap client error", summarizeImapError(error));
+    };
+    const onClose = (hadError?: boolean) => {
+      if (hadError) console.warn("Webmail node-imap client closed after error");
+    };
+    const onEnd = () => {
+      ended = true;
+    };
 
-    logImapLifecycle(operation, "operation started", client);
+    client.on("error", onError);
+    client.on("close", onClose);
+    client.on("end", onEnd);
+
     try {
-      await ensureUsableConnection(client, state, "CONNECT");
-      logImapLifecycle(operation, "connected", client);
-
-      if (options.lockFolder) {
-        await ensureUsableConnection(client, state, "SELECT");
-        lock = (await client.getMailboxLock(options.lockFolder)) as MailboxLock;
-        logImapLifecycle(operation, "lock acquired", client);
-      }
-
-      await ensureUsableConnection(client, state, "CALLBACK");
-      const result = await callback(client);
-      completed = true;
-      logImapLifecycle(operation, "callback completed", client);
-      return result;
+      await withTimeout(waitForReady(client), timeoutMs, "CONNECT");
+      const box = options.folder
+        ? await withTimeout(
+            openBox(client, options.folder, options.readOnly ?? true),
+            timeoutMs,
+            "SELECT",
+          )
+        : undefined;
+      return await withTimeout(callbackFn(client, box), timeoutMs, "OPERATION");
     } catch (error) {
       throw toWebmailHttpException(error);
     } finally {
-      if (lock) {
-        lockReleased = await releaseMailboxLock(lock, operation, client);
+      await safeEndClient(client, timeoutMs, () => ended).catch((error) => {
+        console.warn("Webmail node-imap cleanup failed", summarizeImapError(error));
+      });
+      client.removeListener("error", onError);
+      client.removeListener("close", onClose);
+      client.removeListener("end", onEnd);
+      if (errors.length) {
+        console.info("Webmail node-imap consumed connection errors", { count: errors.length });
       }
-      await cleanupImapClient(client, {
-        operation,
-        operationCompleted: completed,
-        lockReleased: !lock || lockReleased,
-      });
     }
   }
-
-  protected createImapClient(mailbox: string, password: string, socketTimeout: number) {
-    const host = process.env.IMAP_HOST || process.env.WEBMAIL_IMAP_HOST || "jposta-mailserver";
-    const port = Number.parseInt(
-      process.env.IMAP_PORT || process.env.WEBMAIL_IMAP_PORT || "993",
-      10,
-    );
-    const secure =
-      (process.env.IMAP_SECURE || process.env.WEBMAIL_IMAP_SECURE || "true") !== "false";
-    return new ImapFlow({
-      host,
-      port: Number.isInteger(port) ? port : 993,
-      secure,
-      auth: { user: mailbox, pass: password },
-      tls: {
-        servername:
-          process.env.IMAP_TLS_SERVERNAME ||
-          process.env.WEBMAIL_IMAP_SERVERNAME ||
-          process.env.IMAP_SERVERNAME ||
-          "mail.jposta.com",
-        rejectUnauthorized: process.env.WEBMAIL_IMAP_REJECT_UNAUTHORIZED !== "false",
-      },
-      logger: false,
-      socketTimeout,
-      disableAutoIdle: true,
-    } as never) as ImapClient;
-  }
 }
 
-const connectionStates = new WeakMap<object, ImapConnectionState>();
+function waitForReady(client: ImapClient) {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      client.removeListener("ready", onReady);
+      client.removeListener("error", onError);
+      client.removeListener("close", onClose);
+      client.removeListener("end", onEnd);
+    };
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: unknown) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(connectionClosedError());
+    };
+    const onEnd = () => {
+      cleanup();
+      reject(connectionClosedError());
+    };
 
-function setConnectionState(client: ImapClient, state: ImapConnectionState) {
-  if (typeof client === "object" && client) connectionStates.set(client, state);
-}
-
-function getConnectionState(client: ImapClient) {
-  if (typeof client === "object" && client)
-    return connectionStates.get(client) ?? { connected: false };
-  return { connected: false };
-}
-
-async function ensureUsableConnection(
-  client: ImapClient,
-  state: ImapConnectionState,
-  command: string,
-) {
-  if (client.usable) return;
-  if (!state.connected) {
-    await client.connect();
-    state.connected = true;
-    if (client.usable) return;
-  }
-
-  const error = new Error(`IMAP connection is not usable before ${command}.`);
-  (error as Error & { code?: string }).code = "NoConnection";
-  throw error;
-}
-
-function attachImapErrorHandlers(client: ImapClient) {
-  if (!client || typeof client.on !== "function") return;
-  client.on("error", (error: unknown) => {
-    console.error("Webmail IMAP client emitted an error", summarizeImapError(error));
-  });
-  client.on("close", () => {
-    console.warn("Webmail IMAP client connection closed");
+    client.once("ready", onReady);
+    client.once("error", onError);
+    client.once("close", onClose);
+    client.once("end", onEnd);
+    client.connect();
   });
 }
 
-async function releaseMailboxLock(lock: MailboxLock, operation: string, client: ImapClient) {
-  logImapLifecycle(operation, "lock releasing", client);
-  try {
-    await Promise.resolve(lock.release());
-    await settleImapMicrotasks();
-    logImapLifecycle(operation, "lock released", client);
-    return true;
-  } catch (error) {
-    console.warn("Webmail IMAP mailbox lock release failed", {
-      operation,
-      error: summarizeImapError(error),
+function openBox(client: ImapClient, folder: string, readOnly: boolean) {
+  return callback<ImapBox>((done) => client.openBox(folder, readOnly, done));
+}
+
+function getBoxes(client: ImapClient) {
+  return callback<ImapBoxes>((done) => client.getBoxes(done));
+}
+
+function search(client: ImapClient, criteria: unknown[]) {
+  return callback<number[]>((done) => client.search(criteria, done));
+}
+
+function expunge(client: ImapClient, uid: number) {
+  return callback<void>((done) => client.expunge(uid, done));
+}
+
+function callback<T>(start: (done: (error: Error | null, result: T) => void) => void) {
+  return new Promise<T>((resolve, reject) => {
+    start((error, result) => {
+      if (error) reject(error);
+      else resolve(result);
     });
-    logImapLifecycle(operation, "lock released", client);
-    return false;
-  }
-}
-
-async function cleanupImapClient(
-  client: ImapClient,
-  state: { operation: string; operationCompleted: boolean; lockReleased: boolean },
-) {
-  clearImapIdleTimers(client);
-  logImapLifecycle(state.operation, "cleanup starting", client, state);
-
-  const socket = getImapSocket(client);
-  const canLogout = Boolean(
-    state.operationCompleted && state.lockReleased && client?.usable && socket && !socket.destroyed,
-  );
-
-  if (canLogout) {
-    logImapLifecycle(state.operation, "logout selected", client, state);
-    try {
-      await client.logout();
-      await settleImapMicrotasks();
-      logImapLifecycle(state.operation, "cleanup completed", client, state);
-      return;
-    } catch (error) {
-      console.warn("Webmail IMAP logout failed during cleanup", {
-        operation: state.operation,
-        error: summarizeImapError(error),
-      });
-    }
-  }
-
-  logImapLifecycle(state.operation, "socket destroy selected", client, state);
-  safelyDestroyImapSocket(client);
-  logImapLifecycle(state.operation, "cleanup completed", client, state);
-}
-
-function clearImapIdleTimers(client: ImapClient) {
-  try {
-    clearTimeout(client?.idleStartTimer);
-    client.idleStartTimer = false;
-  } catch {
-    // Timer cleanup is best-effort only.
-  }
-}
-
-function safelyDestroyImapSocket(client: ImapClient) {
-  try {
-    const socket = getImapSocket(client);
-    if (socket && !socket.destroyed) socket.destroy?.();
-  } catch {
-    // Cleanup must never escape and must never call an IMAP command.
-  }
-}
-
-function getImapSocket(client: ImapClient) {
-  return client?.socket ?? client?._socket ?? client?._connection?.socket;
-}
-
-async function settleImapMicrotasks() {
-  await new Promise((resolve) => setImmediate(resolve));
-}
-
-function logImapLifecycle(
-  operation: string,
-  event: string,
-  client: ImapClient,
-  extra: Record<string, unknown> = {},
-) {
-  const socket = getImapSocket(client);
-  console.info(`Webmail IMAP lifecycle: ${event}`, {
-    operation,
-    connected: Boolean(client?.authenticated || client?.usable),
-    authenticated: Boolean(client?.authenticated),
-    usable: Boolean(client?.usable),
-    socketDestroyed: Boolean(socket?.destroyed),
-    ...extra,
   });
+}
+
+async function fetchOneMessage(client: ImapClient, uid: number, options: Record<string, unknown>) {
+  const messages = await fetchMessages(client, [uid], options);
+  return messages[0];
+}
+
+function fetchMessages(
+  client: ImapClient,
+  uids: number[],
+  options: Record<string, unknown>,
+): Promise<ParsedFetchedMessage[]> {
+  if (!uids.length) return Promise.resolve([]);
+
+  return new Promise((resolve, reject) => {
+    const messages = new Map<number, Partial<ParsedFetchedMessage>>();
+    let settled = false;
+
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(
+        [...messages.values()]
+          .filter((message): message is ParsedFetchedMessage => Boolean(message.uid && message.raw))
+          .sort((a, b) => b.uid - a.uid),
+      );
+    };
+
+    let fetcher: ImapFetch;
+    try {
+      fetcher = client.fetch(uids, { markSeen: false, ...options });
+    } catch (error) {
+      finish(error);
+      return;
+    }
+
+    fetcher.on("message", (message: ImapMessage, seqno: number) => {
+      const record: Partial<ParsedFetchedMessage> = { uid: 0, flags: [], raw: Buffer.alloc(0) };
+      messages.set(seqno, record);
+      const bodyChunks: Buffer[] = [];
+      const bodyPromises: Array<Promise<void>> = [];
+
+      message.on("body", (stream: Readable) => {
+        bodyPromises.push(
+          streamToBuffer(stream).then((buffer) => {
+            bodyChunks.push(buffer);
+          }),
+        );
+      });
+
+      message.once("attributes", (attrs: { uid?: number; flags?: string[]; struct?: unknown }) => {
+        record.uid = Number(attrs.uid || 0);
+        record.flags = attrs.flags || [];
+        record.struct = attrs.struct;
+      });
+
+      message.once("error", finish);
+      message.once("end", () => {
+        Promise.all(bodyPromises)
+          .then(() => {
+            record.raw = Buffer.concat(bodyChunks);
+          })
+          .catch(finish);
+      });
+    });
+
+    fetcher.once("error", finish);
+    fetcher.once("end", () => {
+      setImmediate(() => finish());
+    });
+  });
+}
+
+function streamToBuffer(stream: Readable) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    stream.once("error", reject);
+    stream.once("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+async function safeEndClient(client: ImapClient, timeoutMs: number, isEnded: () => boolean) {
+  if (isEnded()) return;
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client.removeListener("end", done);
+      client.removeListener("close", done);
+      resolve();
+    };
+    const timer = setTimeout(done, Math.min(timeoutMs, 3000));
+    client.once("end", done);
+    client.once("close", done);
+    try {
+      client.end();
+    } catch {
+      done();
+    }
+  });
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const error = new Error(`IMAP ${operation} timed out.`);
+      (error as Error & { code?: string }).code = "Timeout";
+      reject(error);
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function buildSearchCriteria(input: ListMessagesInput) {
+  if (input.search)
+    return ["OR", ["BODY", String(input.search)], ["SUBJECT", String(input.search)]];
+  if (input.unreadOnly === "true" || input.unreadOnly === true) return ["UNSEEN"];
+  if (input.starredOnly === "true" || input.starredOnly === true) return ["FLAGGED"];
+  return ["ALL"];
+}
+
+function flattenBoxes(boxes: ImapBoxes, parentPath = "") {
+  const result: Array<{ name: string; path: string; specialUse?: string }> = [];
+  for (const [name, box] of Object.entries(boxes || {})) {
+    const delimiter = box.delimiter || "/";
+    const path = parentPath ? `${parentPath}${delimiter}${name}` : name;
+    const attribs = box.attribs || [];
+    if (!attribs.some((attribute) => /NOSELECT/i.test(attribute))) {
+      const specialUse = specialUseFromAttributes(name, attribs);
+      result.push({ name, path, ...(specialUse ? { specialUse } : {}) });
+    }
+    if (box.children) result.push(...flattenBoxes(box.children, path));
+  }
+  return result;
+}
+
+function specialUseFromAttributes(name: string, attributes: string[]) {
+  const value = `${name} ${attributes.join(" ")}`.toLowerCase();
+  if (value.includes("inbox")) return "\\Inbox";
+  if (value.includes("sent")) return "\\Sent";
+  if (value.includes("draft")) return "\\Drafts";
+  if (value.includes("trash") || value.includes("deleted")) return "\\Trash";
+  if (value.includes("junk") || value.includes("spam")) return "\\Junk";
+  if (value.includes("archive")) return "\\Archive";
+  return undefined;
+}
+
+async function toListMessage(message: ParsedFetchedMessage) {
+  const parsed = await simpleParser(message.raw);
+  return {
+    uid: message.uid,
+    messageId: parsed.messageId || "",
+    from: addressText(parsed.from),
+    to: addressText(parsed.to),
+    subject: parsed.subject || "(No subject)",
+    preview: parsed.text?.replace(/\s+/g, " ").trim().slice(0, 180) || parsed.subject || "",
+    date: parsed.date?.toISOString() || null,
+    unread: !hasFlag(message.flags, "\\Seen"),
+    starred: hasFlag(message.flags, "\\Flagged"),
+    hasAttachments: parsed.attachments.length > 0,
+  };
+}
+
+async function toDetailMessage(message: ParsedFetchedMessage) {
+  const parsed = await simpleParser(message.raw);
+  return {
+    uid: message.uid,
+    messageId: parsed.messageId || "",
+    from: addressText(parsed.from),
+    to: addressText(parsed.to),
+    cc: addressText(parsed.cc),
+    bcc: addressText(parsed.bcc),
+    subject: parsed.subject || "(No subject)",
+    date: parsed.date?.toISOString() || null,
+    text: parsed.text || "",
+    sanitizedHtml: sanitizeEmailHtml(parsed.html || undefined),
+    attachments: parsed.attachments.map((attachment, index) => ({
+      partId: String(index),
+      filename: sanitizeFilename(attachment.filename, `attachment-${index + 1}`),
+      contentType: attachment.contentType,
+      size: attachment.size,
+    })),
+    unread: !hasFlag(message.flags, "\\Seen"),
+    starred: hasFlag(message.flags, "\\Flagged"),
+  };
+}
+
+function connectionClosedError() {
+  const error = new Error("IMAP connection closed.");
+  (error as Error & { code?: string }).code = "ConnectionClosed";
+  return error;
 }
 
 function summarizeImapError(error: unknown) {
@@ -558,12 +706,12 @@ function toWebmailHttpException(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
   const value = `${code} ${message}`;
 
-  if (/authentication failed|authenticate failed|invalid credentials|auth/i.test(value)) {
+  if (/authentication failed|authenticate failed|invalid credentials|auth|login/i.test(value)) {
     return new HttpException("Mailbox authentication failed.", HttpStatus.UNAUTHORIZED);
   }
 
   if (
-    /NoConnection|ConnectionClosed|SocketError|connection not available|connection closed|socket error|timeout|timed out|ETIMEDOUT|ECONNRESET|EPIPE/i.test(
+    /NoConnection|ConnectionClosed|SocketError|connection not available|connection closed|socket error|timeout|timed out|ETIMEDOUT|ECONNRESET|EPIPE|closed/i.test(
       value,
     )
   ) {
@@ -581,31 +729,6 @@ function addressText(value: unknown) {
       .filter(Boolean)
       .join(", ");
   return String((value as { text?: string }).text || "");
-}
-
-function toListMessage(message: any) {
-  const envelope = message.envelope || {};
-  const from = formatAddress(envelope.from?.[0]);
-  return {
-    uid: message.uid,
-    messageId: envelope.messageId || "",
-    from,
-    to: (envelope.to || []).map(formatAddress).filter(Boolean).join(", "),
-    subject: envelope.subject || "(No subject)",
-    preview: envelope.subject || "",
-    date: envelope.date?.toISOString?.() || null,
-    unread: !hasFlag(message.flags, "\\Seen"),
-    starred: hasFlag(message.flags, "\\Flagged"),
-    hasAttachments: Boolean(
-      message.bodyStructure?.childNodes?.some?.((node: any) => node.disposition === "attachment"),
-    ),
-  };
-}
-
-function formatAddress(address: any) {
-  if (!address) return "";
-  const email = [address.mailbox, address.host].filter(Boolean).join("@");
-  return address.name ? `${address.name} <${email}>` : email;
 }
 
 function hasFlag(flags: unknown, flag: string) {

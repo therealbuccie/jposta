@@ -1,59 +1,63 @@
-import { ServiceUnavailableException } from "@nestjs/common";
+import { HttpException, ServiceUnavailableException } from "@nestjs/common";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 
 import { WebmailImapService } from "./webmail-imap.service";
 
-describe("WebmailImapService connection safety", () => {
-  it("sets disableAutoIdle for short-lived REST IMAP clients", () => {
-    class ExposedWebmailImapService extends WebmailImapService {
-      create() {
-        return this.createImapClient("admin@golivyn.com", "Password2323@", 12000) as never as {
-          options?: { disableAutoIdle?: boolean };
-        };
-      }
-    }
+const rawMessage = [
+  "Message-ID: <msg-1@example.com>",
+  "From: Alice <alice@example.com>",
+  "To: Admin <admin@golivyn.com>",
+  "Cc: Ops <ops@example.com>",
+  "Subject: Hello launch",
+  "Date: Mon, 13 Jul 2026 10:00:00 +0000",
+  "Content-Type: text/plain; charset=utf-8",
+  "",
+  "Launch notes are ready.",
+].join("\r\n");
 
-    const client = new ExposedWebmailImapService().create();
+const rawWithAttachment = [
+  "Message-ID: <msg-2@example.com>",
+  "From: Billing <billing@example.com>",
+  "To: Admin <admin@golivyn.com>",
+  "Subject: Invoice",
+  "Date: Mon, 13 Jul 2026 11:00:00 +0000",
+  "MIME-Version: 1.0",
+  "Content-Type: multipart/mixed; boundary=abc",
+  "",
+  "--abc",
+  "Content-Type: text/plain; charset=utf-8",
+  "",
+  "Invoice attached.",
+  "--abc",
+  "Content-Type: text/plain; name=invoice.txt",
+  "Content-Disposition: attachment; filename=invoice.txt",
+  "Content-Transfer-Encoding: base64",
+  "",
+  Buffer.from("Invoice data").toString("base64"),
+  "--abc--",
+].join("\r\n");
 
-    assert.equal(client.options?.disableAutoIdle, true);
-  });
-
-  it("returns a controlled error for a dead connection and destroys only the socket", async () => {
-    const client = new FakeImapClient({ connectLeavesDead: true });
+describe("WebmailImapService node-imap adapter", () => {
+  it("returns folders and counts", async () => {
+    const client = new FakeNodeImapClient();
     const service = createService([client]);
 
-    await assert.rejects(() => service.listFolders(session()), ServiceUnavailableException);
-    assert.equal(client.socket.destroyed, true);
-    assert.equal(client.loggedOut, false);
-    assert.equal(client.closed, false);
-    assert.deepEqual(client.operations, ["connect", "socket.destroy"]);
-  });
+    const result = await service.listFolders(session());
 
-  it("does not let socket destruction errors replace the original IMAP error", async () => {
-    const error = Object.assign(new Error("Connection not available"), { code: "NoConnection" });
-    const client = new FakeImapClient({
-      listError: error,
-      socketDestroyError: new Error("destroy failed"),
-    });
-    const service = createService([client]);
-
-    await assert.rejects(
-      async () => service.listFolders(session()),
-      (actual) => {
-        assert.ok(actual instanceof ServiceUnavailableException);
-        assert.equal((actual as Error).message, "Mail storage is temporarily unavailable.");
-        return true;
-      },
+    assert.deepEqual(
+      result.folders.map((folder) => folder.path),
+      ["INBOX", "Sent", "Drafts", "Trash"],
     );
-    assert.equal(client.socketDestroyAttempted, true);
-    assert.equal(client.loggedOut, false);
-    assert.equal(client.closed, false);
+    assert.equal(result.folders[0]!.total, 2);
+    assert.equal(result.folders[0]!.unread, 1);
+    assert.equal(client.ended, true);
   });
 
-  it("returns zero counts for an empty inbox without crashing", async () => {
-    const client = new FakeImapClient({ mailboxExists: 0 });
+  it("returns an empty Inbox", async () => {
+    const client = new FakeNodeImapClient({ messages: [] });
     const service = createService([client]);
 
     const result = await service.listMessages(session(), { folder: "INBOX" });
@@ -66,136 +70,137 @@ describe("WebmailImapService connection safety", () => {
       hasMore: false,
       messages: [],
     });
-    assert.equal(client.lockReleased, true);
-    assert.equal(client.loggedOut, true);
-    assert.equal(client.socket.destroyed, false);
-    assert.deepEqual(client.operations, [
+    assert.equal(client.ended, true);
+  });
+
+  it("lists messages and returns message detail", async () => {
+    const clientA = new FakeNodeImapClient();
+    const clientB = new FakeNodeImapClient();
+    const service = createService([clientA, clientB]);
+
+    const list = await service.listMessages(session(), { folder: "INBOX" });
+    const detail = await service.getMessage(session(), 1, "INBOX");
+
+    assert.equal(list.messages.length, 2);
+    assert.equal((list.messages[0]! as { subject: string }).subject, "Invoice");
+    assert.equal((list.messages[1]! as { unread: boolean }).unread, true);
+    assert.equal(detail.subject, "Hello launch");
+    assert.equal(detail.from, '"Alice" <alice@example.com>');
+    assert.equal(detail.attachments.length, 0);
+  });
+
+  it("updates read and star flags", async () => {
+    const first = new FakeNodeImapClient();
+    const second = new FakeNodeImapClient();
+    const service = createService([first, second]);
+
+    await service.setRead(session(), 1, "INBOX", true);
+    await service.setStar(session(), 1, "INBOX", false);
+
+    assert.deepEqual(first.operations, [
       "connect",
-      "getMailboxLock:INBOX",
-      "lock.release",
-      "logout",
+      "openBox:INBOX:false",
+      "addFlags:1:\\Seen",
+      "end",
+    ]);
+    assert.deepEqual(second.operations, [
+      "connect",
+      "openBox:INBOX:false",
+      "delFlags:1:\\Flagged",
+      "end",
     ]);
   });
 
-  it("folder listing completes with healthy logout and no socket destroy", async () => {
-    const client = new FakeImapClient();
-    const service = createService([client]);
+  it("moves and deletes messages", async () => {
+    const first = new FakeNodeImapClient();
+    const second = new FakeNodeImapClient();
+    const third = new FakeNodeImapClient();
+    const service = createService([first, second, third]);
 
-    const result = await service.listFolders(session());
+    await service.move(session(), 1, "INBOX", "Archive");
+    await service.delete(session(), 1, "INBOX");
+    await service.delete(session(), 1, "Trash");
 
-    assert.equal(result.folders.length, 1);
-    assert.equal(client.loggedOut, true);
-    assert.equal(client.socket.destroyed, false);
-    assert.deepEqual(client.operations, ["connect", "list", "status", "logout"]);
+    assert.ok(first.operations.includes("move:1:Archive"));
+    assert.ok(second.operations.includes("move:1:Trash"));
+    assert.ok(third.operations.includes("addFlags:1:\\Deleted"));
+    assert.ok(third.operations.includes("expunge:1"));
   });
 
-  it("releases mailbox locks before any cleanup action", async () => {
-    const client = new FakeImapClient({ mailboxExists: 0 });
-    const service = createService([client]);
+  it("saves, updates, and deletes drafts", async () => {
+    const first = new FakeNodeImapClient();
+    const second = new FakeNodeImapClient();
+    const third = new FakeNodeImapClient();
+    const service = createService([first, second, third]);
 
-    await service.listMessages(session(), { folder: "INBOX" });
+    const created = await service.saveDraft(session(), rawMessage);
+    await service.saveDraft(session(), rawMessage, 3);
+    await service.deleteDraft(session(), 3);
 
-    assert.ok(client.operations.indexOf("lock.release") > -1);
-    assert.ok(client.operations.indexOf("logout") > client.operations.indexOf("lock.release"));
-    assert.equal(client.commandAfterSocketDestroy, false);
+    assert.deepEqual(created, { uid: 0 });
+    assert.ok(first.operations.includes("append:Drafts"));
+    assert.ok(second.operations.includes("addFlags:3:\\Deleted"));
+    assert.ok(second.operations.includes("append:Drafts"));
+    assert.ok(third.operations.includes("addFlags:3:\\Deleted"));
   });
 
-  it("does not execute commands after socket destruction", async () => {
-    const client = new FakeImapClient({ connectLeavesDead: true });
+  it("returns attachment content", async () => {
+    const client = new FakeNodeImapClient();
+    const service = createService([client]);
+
+    const attachment = await service.getAttachment(session(), 2, "0", "INBOX");
+
+    assert.equal(attachment.filename, "invoice.txt");
+    assert.equal(attachment.content.toString(), "Invoice data");
+  });
+
+  it("converts authentication failure to a controlled exception", async () => {
+    const client = new FakeNodeImapClient({
+      connectError: Object.assign(new Error("AUTHENTICATIONFAILED"), { code: "AUTH" }),
+    });
     const service = createService([client]);
 
     await assert.rejects(
-      () => service.listMessages(session(), { folder: "INBOX" }),
-      ServiceUnavailableException,
+      () => service.listFolders(session()),
+      (error) => {
+        assert.ok(error instanceof HttpException);
+        assert.equal((error as HttpException).getStatus(), 401);
+        return true;
+      },
     );
-
-    assert.equal(client.socket.destroyed, true);
-    assert.equal(client.commandAfterSocketDestroy, false);
-    assert.equal(client.loggedOut, false);
   });
 
-  it("does not crash when connection closes during LIST", async () => {
-    const client = new FakeImapClient({ emitReaderErrorDuringList: true });
+  it("converts network timeout to a controlled exception", async () => {
+    const client = new FakeNodeImapClient({
+      connectError: Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT" }),
+    });
     const service = createService([client]);
 
-    await assertNoProcessCrash(() => service.listFolders(session()));
-    assert.equal(client.loggedOut, false);
-    assert.equal(client.socket.destroyed, true);
+    await assert.rejects(() => service.listFolders(session()), ServiceUnavailableException);
   });
 
-  it("does not crash when connection closes during FETCH iteration", async () => {
-    const client = new FakeImapClient({ mailboxExists: 1, emitReaderErrorDuringFetch: true });
+  it("handles connection close during fetch without process crash", async () => {
+    const client = new FakeNodeImapClient({ closeDuringFetch: true });
     const service = createService([client]);
 
     await assertNoProcessCrash(() => service.listMessages(session(), { folder: "INBOX" }));
-    assert.equal(client.loggedOut, false);
-    assert.equal(client.socket.destroyed, true);
+    assert.equal(client.ended, true);
   });
 
-  it("does not crash when connection closes immediately before cleanup", async () => {
-    const client = new FakeImapClient({ emitReaderErrorAfterList: true });
-    const service = createService([client]);
-
-    await assertNoProcessCrash(() => service.listFolders(session()));
-    assert.equal(client.loggedOut, false);
-    assert.equal(client.socket.destroyed, true);
-  });
-
-  it("does not turn delayed NoConnection into an unhandled rejection", async () => {
-    const client = new FakeImapClient({ emitReaderErrorAfterCallback: true });
-    const service = createService([client]);
-
-    await assertNoProcessCrash(() => service.listFolders(session()), { allowSuccess: true });
-  });
-
-  it("treats an already-dead connection as socket-only cleanup", async () => {
-    const client = new FakeImapClient({ alreadyDestroyedSocket: true });
-    const service = createService([client]);
-
-    await assert.rejects(
-      () => service.listMessages(session(), { folder: "INBOX" }),
-      ServiceUnavailableException,
-    );
-
-    assert.equal(client.loggedOut, false);
-    assert.equal(client.socket.destroyed, true);
-    assert.equal(client.socketDestroyAttempted, false);
-  });
-
-  it("keeps the process alive after repeated folder and message requests", async () => {
-    const clients = [
-      new FakeImapClient(),
-      new FakeImapClient({ mailboxExists: 0 }),
-      new FakeImapClient(),
-      new FakeImapClient({ mailboxExists: 0 }),
-    ];
+  it("keeps process alive across repeated requests", async () => {
+    const clients = [new FakeNodeImapClient(), new FakeNodeImapClient(), new FakeNodeImapClient()];
     const service = createService(clients);
 
     await assertNoProcessCrash(
       async () => {
         await service.listFolders(session());
         await service.listMessages(session(), { folder: "INBOX" });
-        await service.listFolders(session());
-        await service.listMessages(session(), { folder: "INBOX" });
+        await service.getMessage(session(), 1, "INBOX");
       },
       { allowSuccess: true },
     );
 
-    for (const client of clients) {
-      assert.equal(client.loggedOut, true);
-      assert.equal(client.commandAfterSocketDestroy, false);
-    }
-  });
-
-  it("performs healthy connection cleanup with logout", async () => {
-    const client = new FakeImapClient({ mailboxExists: 0 });
-    const service = createService([client]);
-
-    await service.listMessages(session(), { folder: "INBOX" });
-
-    assert.equal(client.lockReleased, true);
-    assert.equal(client.loggedOut, true);
-    assert.equal(client.socket.destroyed, false);
+    for (const client of clients) assert.equal(client.ended, true);
   });
 });
 
@@ -214,7 +219,6 @@ async function assertNoProcessCrash(
       assert.ok(error instanceof ServiceUnavailableException);
     });
     await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setImmediate(resolve));
   } finally {
     process.removeListener("uncaughtException", uncaught);
     process.removeListener("unhandledRejection", unhandled);
@@ -222,7 +226,7 @@ async function assertNoProcessCrash(
   assert.deepEqual(crashes, []);
 }
 
-function createService(clients: FakeImapClient[]) {
+function createService(clients: FakeNodeImapClient[]) {
   class TestWebmailImapService extends WebmailImapService {
     protected override createImapClient() {
       const client = clients.shift();
@@ -241,165 +245,142 @@ function session() {
   } as never;
 }
 
-class FakeImapClient extends EventEmitter {
-  usable = false;
-  authenticated = false;
-  mailbox: { exists: number } | false = { exists: 0 };
-  connectCount = 0;
-  loggedOut = false;
-  closed = false;
-  lockReleased = false;
-  socketDestroyAttempted = false;
-  commandAfterSocketDestroy = false;
-  idleStartTimer: NodeJS.Timeout | false = setTimeout(() => undefined, 60000);
+type FakeMessage = {
+  uid: number;
+  flags: string[];
+  raw: string;
+};
+
+class FakeNodeImapClient extends EventEmitter {
   operations: string[] = [];
-  socket = {
-    destroyed: false,
-    destroy: () => {
-      this.operations.push("socket.destroy");
-      this.socketDestroyAttempted = true;
-      if (this.options.socketDestroyError) throw this.options.socketDestroyError;
-      this.socket.destroyed = true;
-      this.usable = false;
-      this.authenticated = false;
-    },
-  };
+  ended = false;
+  private readonly messages: FakeMessage[];
 
   constructor(
     private readonly options: {
-      alreadyDestroyedSocket?: boolean;
-      connectLeavesDead?: boolean;
-      emitReaderErrorAfterCallback?: boolean;
-      emitReaderErrorAfterList?: boolean;
-      emitReaderErrorDuringFetch?: boolean;
-      emitReaderErrorDuringList?: boolean;
-      listError?: Error;
-      mailboxExists?: number;
-      socketDestroyError?: Error;
+      closeDuringFetch?: boolean;
+      connectError?: Error;
+      messages?: FakeMessage[];
     } = {},
   ) {
     super();
-    this.mailbox = { exists: options.mailboxExists ?? 0 };
-    this.socket.destroyed = Boolean(options.alreadyDestroyedSocket);
+    this.messages = options.messages ?? [
+      { uid: 1, flags: [], raw: rawMessage },
+      { uid: 2, flags: ["\\Seen", "\\Flagged"], raw: rawWithAttachment },
+    ];
   }
 
-  async connect() {
+  connect() {
     this.operations.push("connect");
-    this.connectCount += 1;
-    this.usable = !this.options.connectLeavesDead && !this.socket.destroyed;
-    this.authenticated = this.usable;
+    setImmediate(() => {
+      if (this.options.connectError) this.emit("error", this.options.connectError);
+      else this.emit("ready");
+    });
   }
 
-  async logout() {
-    this.assertSocketOpen("logout");
-    this.operations.push("logout");
-    this.loggedOut = true;
-    this.usable = false;
-    this.authenticated = false;
+  end() {
+    this.operations.push("end");
+    this.ended = true;
+    setImmediate(() => this.emit("end"));
   }
 
-  close() {
-    this.closed = true;
-    throw new Error("close must not be called during cleanup");
+  openBox(name: string, readOnly: boolean, callback: (error: Error | null, box: unknown) => void) {
+    this.operations.push(`openBox:${name}:${readOnly}`);
+    setImmediate(() =>
+      callback(null, { name, messages: { total: this.messages.length, unseen: 1 } }),
+    );
   }
 
-  async getMailboxLock(path: string) {
-    this.assertSocketOpen(`getMailboxLock:${path}`);
-    this.operations.push(`getMailboxLock:${path}`);
-    return {
-      release: async () => {
-        this.operations.push("lock.release");
-        this.lockReleased = true;
-        await new Promise((resolve) => setImmediate(resolve));
-        this.assertSocketOpen("lock.release.settled");
-      },
-    };
+  getBoxes(callback: (error: Error | null, boxes: unknown) => void) {
+    this.operations.push("getBoxes");
+    setImmediate(() =>
+      callback(null, {
+        INBOX: { attribs: ["\\Inbox"], delimiter: "/", children: null },
+        Sent: { attribs: ["\\Sent"], delimiter: "/", children: null },
+        Drafts: { attribs: ["\\Drafts"], delimiter: "/", children: null },
+        Trash: { attribs: ["\\Trash"], delimiter: "/", children: null },
+      }),
+    );
   }
 
-  async *list() {
-    this.assertSocketOpen("list");
-    this.operations.push("list");
-    if (this.options.emitReaderErrorDuringList) this.emitConnectionClosed();
-    if (this.options.listError) throw this.options.listError;
-    yield { path: "INBOX", name: "Inbox", specialUse: "\\Inbox" };
-    if (this.options.emitReaderErrorAfterList) this.emitConnectionClosed();
-    if (this.options.emitReaderErrorAfterCallback) setImmediate(() => this.emitConnectionClosed());
+  status(name: string, callback: (error: Error | null, box: unknown) => void) {
+    this.operations.push(`status:${name}`);
+    setImmediate(() =>
+      callback(null, {
+        messages: {
+          total: name === "INBOX" ? this.messages.length : 0,
+          unseen: name === "INBOX" ? 1 : 0,
+        },
+      }),
+    );
   }
 
-  async status() {
-    this.assertSocketOpen("status");
-    this.operations.push("status");
-    return { messages: 0, unseen: 0 };
+  search(criteria: unknown[], callback: (error: Error | null, uids: number[]) => void) {
+    this.operations.push(`search:${criteria.join("|")}`);
+    let messages = this.messages;
+    if (criteria.includes("UNSEEN"))
+      messages = messages.filter((message) => !message.flags.includes("\\Seen"));
+    if (criteria.includes("FLAGGED"))
+      messages = messages.filter((message) => message.flags.includes("\\Flagged"));
+    setImmediate(() =>
+      callback(
+        null,
+        messages.map((message) => message.uid),
+      ),
+    );
   }
 
-  async search() {
-    this.assertSocketOpen("search");
-    this.operations.push("search");
-    return [1];
+  fetch(uids: number[]) {
+    this.operations.push(`fetch:${uids.join(",")}`);
+    const fetcher = new EventEmitter();
+    setImmediate(() => {
+      if (this.options.closeDuringFetch) {
+        this.emit("close", true);
+        fetcher.emit(
+          "error",
+          Object.assign(new Error("connection closed during fetch"), { code: "ConnectionClosed" }),
+        );
+        return;
+      }
+
+      for (const uid of uids) {
+        const data = this.messages.find((message) => message.uid === uid);
+        if (!data) continue;
+        const message = new EventEmitter();
+        fetcher.emit("message", message, uid);
+        setImmediate(() => {
+          message.emit("body", Readable.from([Buffer.from(data.raw)]), { which: "" });
+          message.emit("attributes", { uid: data.uid, flags: data.flags, struct: [] });
+          message.emit("end");
+        });
+      }
+      setImmediate(() => fetcher.emit("end"));
+    });
+    return fetcher;
   }
 
-  async *fetch() {
-    this.assertSocketOpen("fetch");
-    this.operations.push("fetch");
-    if (this.options.emitReaderErrorDuringFetch) this.emitConnectionClosed();
-    yield {
-      uid: 1,
-      envelope: { subject: "Hello", from: [{ name: "A", mailbox: "a", host: "example.com" }] },
-      flags: new Set(),
-      bodyStructure: {},
-    };
+  addFlags(uid: number, flag: string, callback: (error: Error | null) => void) {
+    this.operations.push(`addFlags:${uid}:${flag}`);
+    setImmediate(() => callback(null));
   }
 
-  async fetchOne() {
-    this.assertSocketOpen("fetchOne");
-    this.operations.push("fetchOne");
-    return false;
+  delFlags(uid: number, flag: string, callback: (error: Error | null) => void) {
+    this.operations.push(`delFlags:${uid}:${flag}`);
+    setImmediate(() => callback(null));
   }
 
-  async messageMove() {
-    this.assertSocketOpen("messageMove");
-    this.operations.push("messageMove");
-    return undefined;
+  move(uid: number, destination: string, callback: (error: Error | null) => void) {
+    this.operations.push(`move:${uid}:${destination}`);
+    setImmediate(() => callback(null));
   }
 
-  async messageDelete() {
-    this.assertSocketOpen("messageDelete");
-    this.operations.push("messageDelete");
-    return undefined;
+  append(_message: string, options: { mailbox?: string }, callback: (error: Error | null) => void) {
+    this.operations.push(`append:${options.mailbox}`);
+    setImmediate(() => callback(null));
   }
 
-  async messageFlagsAdd() {
-    this.assertSocketOpen("messageFlagsAdd");
-    this.operations.push("messageFlagsAdd");
-    return undefined;
-  }
-
-  async messageFlagsRemove() {
-    this.assertSocketOpen("messageFlagsRemove");
-    this.operations.push("messageFlagsRemove");
-    return undefined;
-  }
-
-  async append() {
-    this.assertSocketOpen("append");
-    this.operations.push("append");
-    return { uid: 1 };
-  }
-
-  private assertSocketOpen(command: string) {
-    if (this.socket.destroyed) {
-      this.commandAfterSocketDestroy = true;
-      const error = Object.assign(new Error(`Command ${command} after socket destroy`), {
-        code: "NoConnection",
-      });
-      throw error;
-    }
-  }
-
-  private emitConnectionClosed() {
-    this.usable = false;
-    this.authenticated = false;
-    this.emit("error", Object.assign(new Error("reader closed"), { code: "ConnectionClosed" }));
-    this.emit("close");
+  expunge(uid: number, callback: (error: Error | null) => void) {
+    this.operations.push(`expunge:${uid}`);
+    setImmediate(() => callback(null));
   }
 }
