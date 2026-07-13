@@ -295,7 +295,8 @@ export class WebmailImapService {
     } catch {
       return false;
     } finally {
-      await logoutOrDestroy(client);
+      logImapCleanupState("health", client);
+      safelyCloseClient(client);
     }
   }
 
@@ -347,7 +348,8 @@ export class WebmailImapService {
       throw toWebmailHttpException(error);
     } finally {
       if (lock) releaseMailboxLock(lock);
-      await logoutOrDestroy(client);
+      logImapCleanupState("mailbox-operation", client);
+      safelyCloseClient(client);
     }
   }
 
@@ -412,36 +414,30 @@ function releaseMailboxLock(lock: MailboxLock) {
   }
 }
 
-async function logoutOrDestroy(client: ImapClient) {
+function safelyCloseClient(client: ImapClient) {
   try {
-    if (client.usable) await client.logout();
-    else destroyImapClient(client);
+    client.close?.();
   } catch {
-    destroyImapClient(client);
+    // Ignore cleanup failures. Cleanup must never send another IMAP command.
+  }
+
+  const socket = client?.socket ?? client?._socket ?? client?._connection?.socket;
+  try {
+    if (socket && !socket.destroyed) socket.destroy();
+  } catch {
+    // Ignore socket destruction failures during cleanup.
   }
 }
 
-function destroyImapClient(client: ImapClient) {
-  const maybeClient = client as ImapClient & {
-    _socket?: { destroy?: () => void };
-    _connection?: { socket?: { destroy?: () => void } };
-  };
-
-  const cleanupFns = [
-    () => maybeClient.socket?.destroy?.(),
-    () => maybeClient._socket?.destroy?.(),
-    () => maybeClient._connection?.socket?.destroy?.(),
-    () => maybeClient.close?.(),
-    () => maybeClient.destroy?.(),
-  ];
-
-  for (const cleanup of cleanupFns) {
-    try {
-      cleanup();
-    } catch {
-      // Ignore low-level socket cleanup failures. The request already has a safe HTTP response.
-    }
-  }
+function logImapCleanupState(operation: string, client: ImapClient) {
+  const socket = client?.socket ?? client?._socket ?? client?._connection?.socket;
+  console.info("Webmail IMAP cleanup", {
+    operation,
+    connected: Boolean(client?.authenticated || client?.usable),
+    authenticated: Boolean(client?.authenticated),
+    usable: Boolean(client?.usable),
+    socketDestroyed: Boolean(socket?.destroyed),
+  });
 }
 
 function summarizeImapError(error: unknown) {
@@ -526,3 +522,5 @@ function folderRank(folder: { name: string; path: string; specialUse?: string })
   if (value.includes("archive")) return 5;
   return 10;
 }
+
+

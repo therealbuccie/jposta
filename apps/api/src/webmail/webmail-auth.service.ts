@@ -116,14 +116,24 @@ async function authenticateImap(email: string, password: string) {
       throw new Error("IMAP authentication was not completed.");
     }
   } finally {
-    if (client.usable) {
-      await client.logout().catch(() => {
-        client.close();
-      });
-    } else {
-      client.close();
-    }
+    safelyCloseClient(client);
   }
 }
 
+
+
+function safelyCloseClient(client: ImapFlow) {
+  try {
+    client.close();
+  } catch {
+    // Ignore cleanup failures. Cleanup must not send IMAP commands.
+  }
+
+  const socket = (client as unknown as { socket?: { destroyed?: boolean; destroy?: () => void } }).socket;
+  try {
+    if (socket && !socket.destroyed) socket.destroy?.();
+  } catch {
+    // Ignore socket cleanup failures.
+  }
+}
 

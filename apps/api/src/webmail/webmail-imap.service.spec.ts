@@ -11,12 +11,14 @@ describe("WebmailImapService connection safety", () => {
     const service = createService([client]);
 
     await assert.rejects(() => service.listFolders(session()), ServiceUnavailableException);
-    assert.equal(client.destroyed, true);
+    assert.equal(client.closed, true);
+    assert.equal(client.socket.destroyed, true);
+    assert.equal(client.loggedOut, false);
   });
 
   it("does not let cleanup errors replace the original IMAP error", async () => {
     const error = Object.assign(new Error("Connection not available"), { code: "NoConnection" });
-    const client = new FakeImapClient({ listError: error, logoutError: new Error("logout failed") });
+    const client = new FakeImapClient({ listError: error, closeError: new Error("close failed") });
     const service = createService([client]);
 
     await assert.rejects(async () => service.listFolders(session()), (actual) => {
@@ -24,7 +26,8 @@ describe("WebmailImapService connection safety", () => {
       assert.equal((actual as Error).message, "Mail storage is temporarily unavailable.");
       return true;
     });
-    assert.equal(client.destroyed, true);
+    assert.equal(client.socket.destroyed, true);
+    assert.equal(client.loggedOut, false);
   });
 
   it("returns zero counts for an empty inbox", async () => {
@@ -42,15 +45,40 @@ describe("WebmailImapService connection safety", () => {
       messages: [],
     });
     assert.equal(client.lockReleased, true);
-    assert.equal(client.loggedOut, true);
+    assert.equal(client.closed, true);
+    assert.equal(client.loggedOut, false);
   });
 
-  it("consumes emitted reader errors so the API process does not exit", async () => {
+  it("does not crash when connection closes during LIST", async () => {
     const client = new FakeImapClient({ emitReaderErrorDuringList: true });
     const service = createService([client]);
 
-    await assert.doesNotReject(() => service.listFolders(session()));
-    assert.equal(client.loggedOut, true);
+    await assertNoProcessCrash(() => service.listFolders(session()));
+    assert.equal(client.closed, true);
+  });
+
+  it("does not crash when connection closes during FETCH iteration", async () => {
+    const client = new FakeImapClient({ mailboxExists: 1, emitReaderErrorDuringFetch: true });
+    const service = createService([client]);
+
+    await assertNoProcessCrash(() => service.listMessages(session(), { folder: "INBOX" }));
+    assert.equal(client.closed, true);
+  });
+
+  it("does not crash when connection closes immediately before cleanup", async () => {
+    const client = new FakeImapClient({ emitReaderErrorAfterList: true });
+    const service = createService([client]);
+
+    await assertNoProcessCrash(() => service.listFolders(session()));
+    assert.equal(client.closed, true);
+  });
+
+  it("does not crash when connection closes immediately after callback completion", async () => {
+    const client = new FakeImapClient({ emitReaderErrorAfterCallback: true });
+    const service = createService([client]);
+
+    await assertNoProcessCrash(() => service.listFolders(session()));
+    assert.equal(client.closed, true);
   });
 
   it("creates a fresh client for each folder operation", async () => {
@@ -63,10 +91,30 @@ describe("WebmailImapService connection safety", () => {
 
     assert.equal(first.connectCount, 1);
     assert.equal(second.connectCount, 1);
-    assert.equal(first.loggedOut, true);
-    assert.equal(second.loggedOut, true);
+    assert.equal(first.closed, true);
+    assert.equal(second.closed, true);
+    assert.equal(first.loggedOut, false);
+    assert.equal(second.loggedOut, false);
   });
 });
+
+async function assertNoProcessCrash(operation: () => Promise<unknown>) {
+  const crashes: unknown[] = [];
+  const uncaught = (error: unknown) => crashes.push(error);
+  const unhandled = (reason: unknown) => crashes.push(reason);
+  process.once("uncaughtException", uncaught);
+  process.once("unhandledRejection", unhandled);
+  try {
+    await operation().catch((error) => {
+      assert.ok(error instanceof ServiceUnavailableException);
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    process.removeListener("uncaughtException", uncaught);
+    process.removeListener("unhandledRejection", unhandled);
+  }
+  assert.deepEqual(crashes, []);
+}
 
 function createService(clients: FakeImapClient[]) {
   class TestWebmailImapService extends WebmailImapService {
@@ -89,19 +137,28 @@ function session() {
 
 class FakeImapClient extends EventEmitter {
   usable = false;
+  authenticated = false;
   mailbox: { exists: number } | false = { exists: 0 };
   connectCount = 0;
   loggedOut = false;
   closed = false;
-  destroyed = false;
   lockReleased = false;
+  socket = {
+    destroyed: false,
+    destroy: () => {
+      this.socket.destroyed = true;
+    },
+  };
 
   constructor(
     private readonly options: {
+      closeError?: Error;
       connectLeavesDead?: boolean;
+      emitReaderErrorAfterCallback?: boolean;
+      emitReaderErrorAfterList?: boolean;
+      emitReaderErrorDuringFetch?: boolean;
       emitReaderErrorDuringList?: boolean;
       listError?: Error;
-      logoutError?: Error;
       mailboxExists?: number;
     } = {},
   ) {
@@ -112,22 +169,22 @@ class FakeImapClient extends EventEmitter {
   async connect() {
     this.connectCount += 1;
     this.usable = !this.options.connectLeavesDead;
+    this.authenticated = this.usable;
   }
 
   async logout() {
     this.loggedOut = true;
-    if (this.options.logoutError) throw this.options.logoutError;
-    this.usable = false;
+    throw new Error("logout must not be called during cleanup");
   }
 
   close() {
     this.closed = true;
     this.usable = false;
-  }
-
-  destroy() {
-    this.destroyed = true;
-    this.usable = false;
+    this.authenticated = false;
+    if (this.options.closeError) throw this.options.closeError;
+    if (this.options.emitReaderErrorAfterCallback) {
+      setImmediate(() => this.emitConnectionClosed());
+    }
   }
 
   async getMailboxLock() {
@@ -139,11 +196,10 @@ class FakeImapClient extends EventEmitter {
   }
 
   async *list() {
-    if (this.options.emitReaderErrorDuringList) {
-      this.emit("error", Object.assign(new Error("reader closed"), { code: "ConnectionClosed" }));
-    }
+    if (this.options.emitReaderErrorDuringList) this.emitConnectionClosed();
     if (this.options.listError) throw this.options.listError;
     yield { path: "INBOX", name: "Inbox", specialUse: "\\Inbox" };
+    if (this.options.emitReaderErrorAfterList) this.emitConnectionClosed();
   }
 
   async status() {
@@ -151,11 +207,17 @@ class FakeImapClient extends EventEmitter {
   }
 
   async search() {
-    return [];
+    return [1];
   }
 
   async *fetch() {
-    return;
+    if (this.options.emitReaderErrorDuringFetch) this.emitConnectionClosed();
+    yield {
+      uid: 1,
+      envelope: { subject: "Hello", from: [{ name: "A", mailbox: "a", host: "example.com" }] },
+      flags: new Set(),
+      bodyStructure: {},
+    };
   }
 
   async fetchOne() {
@@ -181,4 +243,13 @@ class FakeImapClient extends EventEmitter {
   async append() {
     return { uid: 1 };
   }
+
+  private emitConnectionClosed() {
+    this.usable = false;
+    this.authenticated = false;
+    this.emit("error", Object.assign(new Error("reader closed"), { code: "ConnectionClosed" }));
+    this.emit("close");
+  }
 }
+
+
