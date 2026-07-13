@@ -44,35 +44,39 @@ type ImapConnectionState = {
 @Injectable()
 export class WebmailImapService {
   async listFolders(session: WebmailSession) {
-    return this.withMailboxConnection(session.mailbox.address, session.credential, async (client) => {
-      const state = getConnectionState(client);
-      const folders = [] as Array<{
-        name: string;
-        path: string;
-        specialUse?: string;
-        total: number;
-        unread: number;
-      }>;
+    return this.withMailboxConnection(
+      session.mailbox.address,
+      session.credential,
+      async (client) => {
+        const state = getConnectionState(client);
+        const folders = [] as Array<{
+          name: string;
+          path: string;
+          specialUse?: string;
+          total: number;
+          unread: number;
+        }>;
 
-      await ensureUsableConnection(client, state, "LIST");
-      for await (const mailbox of client.list()) {
-        await ensureUsableConnection(client, state, "STATUS");
-        const status = await client.status(mailbox.path, { messages: true, unseen: true });
-        folders.push({
-          path: mailbox.path,
-          name: mailbox.name || mailbox.path,
-          specialUse: mailbox.specialUse,
-          total: Number(status?.messages || 0),
-          unread: Number(status?.unseen || 0),
-        });
-      }
+        await ensureUsableConnection(client, state, "LIST");
+        for await (const mailbox of client.list()) {
+          await ensureUsableConnection(client, state, "STATUS");
+          const status = await client.status(mailbox.path, { messages: true, unseen: true });
+          folders.push({
+            path: mailbox.path,
+            name: mailbox.name || mailbox.path,
+            specialUse: mailbox.specialUse,
+            total: Number(status?.messages || 0),
+            unread: Number(status?.unseen || 0),
+          });
+        }
 
-      return {
-        folders: folders.sort(
-          (a, b) => folderRank(a) - folderRank(b) || a.name.localeCompare(b.name),
-        ),
-      };
-    });
+        return {
+          folders: folders.sort(
+            (a, b) => folderRank(a) - folderRank(b) || a.name.localeCompare(b.name),
+          ),
+        };
+      },
+    );
   }
 
   async listMessages(session: WebmailSession, input: ListMessagesInput) {
@@ -296,7 +300,7 @@ export class WebmailImapService {
       return false;
     } finally {
       logImapCleanupState("health", client);
-      safelyCloseClient(client);
+      safelyDestroyImapClient(client);
     }
   }
 
@@ -349,21 +353,29 @@ export class WebmailImapService {
     } finally {
       if (lock) releaseMailboxLock(lock);
       logImapCleanupState("mailbox-operation", client);
-      safelyCloseClient(client);
+      safelyDestroyImapClient(client);
     }
   }
 
   protected createImapClient(mailbox: string, password: string, socketTimeout: number) {
-    const host = process.env.WEBMAIL_IMAP_HOST || process.env.IMAP_HOST || "mail.jposta.com";
-    const port = Number.parseInt(process.env.WEBMAIL_IMAP_PORT || process.env.IMAP_PORT || "993", 10);
+    const host = process.env.IMAP_HOST || process.env.WEBMAIL_IMAP_HOST || "jposta-mailserver";
+    const port = Number.parseInt(
+      process.env.IMAP_PORT || process.env.WEBMAIL_IMAP_PORT || "993",
+      10,
+    );
+    const secure =
+      (process.env.IMAP_SECURE || process.env.WEBMAIL_IMAP_SECURE || "true") !== "false";
     return new ImapFlow({
       host,
       port: Number.isInteger(port) ? port : 993,
-      secure: true,
+      secure,
       auth: { user: mailbox, pass: password },
       tls: {
         servername:
-          process.env.WEBMAIL_IMAP_SERVERNAME || process.env.IMAP_SERVERNAME || host,
+          process.env.IMAP_TLS_SERVERNAME ||
+          process.env.WEBMAIL_IMAP_SERVERNAME ||
+          process.env.IMAP_SERVERNAME ||
+          "mail.jposta.com",
         rejectUnauthorized: process.env.WEBMAIL_IMAP_REJECT_UNAUTHORIZED !== "false",
       },
       logger: false,
@@ -379,11 +391,16 @@ function setConnectionState(client: ImapClient, state: ImapConnectionState) {
 }
 
 function getConnectionState(client: ImapClient) {
-  if (typeof client === "object" && client) return connectionStates.get(client) ?? { connected: false };
+  if (typeof client === "object" && client)
+    return connectionStates.get(client) ?? { connected: false };
   return { connected: false };
 }
 
-async function ensureUsableConnection(client: ImapClient, state: ImapConnectionState, command: string) {
+async function ensureUsableConnection(
+  client: ImapClient,
+  state: ImapConnectionState,
+  command: string,
+) {
   if (client.usable) return;
   if (!state.connected) {
     await client.connect();
@@ -414,18 +431,15 @@ function releaseMailboxLock(lock: MailboxLock) {
   }
 }
 
-function safelyCloseClient(client: ImapClient) {
+function safelyDestroyImapClient(client: ImapClient) {
   try {
-    client.close?.();
+    const socket = client?.socket ?? client?._socket ?? client?._connection?.socket;
+    if (socket && !socket.destroyed) {
+      socket.removeAllListeners?.();
+      socket.destroy?.();
+    }
   } catch {
-    // Ignore cleanup failures. Cleanup must never send another IMAP command.
-  }
-
-  const socket = client?.socket ?? client?._socket ?? client?._connection?.socket;
-  try {
-    if (socket && !socket.destroyed) socket.destroy();
-  } catch {
-    // Ignore socket destruction failures during cleanup.
+    // Cleanup must never escape and must never call an IMAP command.
   }
 }
 
@@ -455,7 +469,8 @@ function summarizeImapError(error: unknown) {
 function toWebmailHttpException(error: unknown) {
   if (error instanceof HttpException) return error;
 
-  const code = typeof error === "object" && error ? String((error as { code?: unknown }).code || "") : "";
+  const code =
+    typeof error === "object" && error ? String((error as { code?: unknown }).code || "") : "";
   const message = error instanceof Error ? error.message : String(error || "");
   const value = `${code} ${message}`;
 
@@ -463,7 +478,11 @@ function toWebmailHttpException(error: unknown) {
     return new HttpException("Mailbox authentication failed.", HttpStatus.UNAUTHORIZED);
   }
 
-  if (/NoConnection|ConnectionClosed|SocketError|connection not available|connection closed|socket error|timeout|timed out|ETIMEDOUT|ECONNRESET|EPIPE/i.test(value)) {
+  if (
+    /NoConnection|ConnectionClosed|SocketError|connection not available|connection closed|socket error|timeout|timed out|ETIMEDOUT|ECONNRESET|EPIPE/i.test(
+      value,
+    )
+  ) {
     return new ServiceUnavailableException("Mail storage is temporarily unavailable.");
   }
 
@@ -522,5 +541,3 @@ function folderRank(folder: { name: string; path: string; specialUse?: string })
   if (value.includes("archive")) return 5;
   return 10;
 }
-
-

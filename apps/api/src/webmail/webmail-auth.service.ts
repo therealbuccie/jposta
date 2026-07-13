@@ -101,11 +101,18 @@ function getErrorMessage(error: unknown) {
 
 async function authenticateImap(email: string, password: string) {
   const client = new ImapFlow({
-    host: "mail.jposta.com",
-    port: 993,
-    secure: true,
+    host: process.env.IMAP_HOST || process.env.WEBMAIL_IMAP_HOST || "jposta-mailserver",
+    port: Number.parseInt(process.env.IMAP_PORT || process.env.WEBMAIL_IMAP_PORT || "993", 10),
+    secure: (process.env.IMAP_SECURE || "true") !== "false",
     auth: { user: email, pass: password },
-    tls: { servername: "mail.jposta.com", rejectUnauthorized: true },
+    tls: {
+      servername:
+        process.env.IMAP_TLS_SERVERNAME ||
+        process.env.WEBMAIL_IMAP_SERVERNAME ||
+        process.env.IMAP_SERVERNAME ||
+        "mail.jposta.com",
+      rejectUnauthorized: process.env.WEBMAIL_IMAP_REJECT_UNAUTHORIZED !== "false",
+    },
     logger: false,
     socketTimeout: 12000,
   } as never);
@@ -116,24 +123,30 @@ async function authenticateImap(email: string, password: string) {
       throw new Error("IMAP authentication was not completed.");
     }
   } finally {
-    safelyCloseClient(client);
+    safelyDestroyImapClient(client);
   }
 }
 
-
-
-function safelyCloseClient(client: ImapFlow) {
+function safelyDestroyImapClient(client: ImapFlow) {
   try {
-    client.close();
-  } catch {
-    // Ignore cleanup failures. Cleanup must not send IMAP commands.
-  }
+    const imapClient = client as unknown as {
+      socket?: ImapSocket;
+      _socket?: ImapSocket;
+      _connection?: { socket?: ImapSocket };
+    };
+    const socket = imapClient.socket ?? imapClient._socket ?? imapClient._connection?.socket;
 
-  const socket = (client as unknown as { socket?: { destroyed?: boolean; destroy?: () => void } }).socket;
-  try {
-    if (socket && !socket.destroyed) socket.destroy?.();
+    if (socket && !socket.destroyed) {
+      socket.removeAllListeners?.();
+      socket.destroy?.();
+    }
   } catch {
-    // Ignore socket cleanup failures.
+    // Cleanup must never escape and must never issue another IMAP command.
   }
 }
 
+type ImapSocket = {
+  destroyed?: boolean;
+  removeAllListeners?: () => void;
+  destroy?: () => void;
+};

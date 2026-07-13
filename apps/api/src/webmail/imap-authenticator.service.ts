@@ -54,7 +54,8 @@ function authenticateImap(email: string, password: string) {
     rejectUnauthorized: config.rejectUnauthorized,
     mechanism,
     socketTimeout: config.socketTimeout,
-    comparison: "doveadm auth test validates the Dovecot auth backend; this verifies IMAPS TLS plus IMAP LOGIN.",
+    comparison:
+      "doveadm auth test validates the Dovecot auth backend; this verifies IMAPS TLS plus IMAP LOGIN.",
   });
 
   return new Promise<void>((resolve, reject) => {
@@ -225,11 +226,15 @@ function authenticateImap(email: string, password: string) {
 }
 
 function readImapAuthConfig(): ImapAuthConfig {
-  const host = process.env.WEBMAIL_IMAP_HOST || process.env.IMAP_HOST || "mail.jposta.com";
+  const host = process.env.IMAP_HOST || process.env.WEBMAIL_IMAP_HOST || "jposta-mailserver";
   return {
     host,
-    port: readPort(process.env.WEBMAIL_IMAP_PORT || process.env.IMAP_PORT),
-    servername: process.env.WEBMAIL_IMAP_SERVERNAME || process.env.IMAP_SERVERNAME || host,
+    port: readPort(process.env.IMAP_PORT || process.env.WEBMAIL_IMAP_PORT),
+    servername:
+      process.env.IMAP_TLS_SERVERNAME ||
+      process.env.WEBMAIL_IMAP_SERVERNAME ||
+      process.env.IMAP_SERVERNAME ||
+      "mail.jposta.com",
     rejectUnauthorized: process.env.WEBMAIL_IMAP_REJECT_UNAUTHORIZED !== "false",
     socketTimeout: readTimeout(process.env.WEBMAIL_IMAP_TIMEOUT_MS),
   };
@@ -269,6 +274,3 @@ function parseResponseCode(line: string) {
 function redactLoginLine(line: string) {
   return line.replace(/(LOGIN\s+"[^"]+"\s+")[^"]+(")/i, "$1[redacted]$2");
 }
-
-
-

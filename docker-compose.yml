@@ -38,6 +38,11 @@ services:
       - "4000:4000"
     env_file:
       - .env
+    environment:
+      IMAP_HOST: ${IMAP_HOST:-jposta-mailserver}
+      IMAP_PORT: ${IMAP_PORT:-993}
+      IMAP_SECURE: ${IMAP_SECURE:-true}
+      IMAP_TLS_SERVERNAME: ${IMAP_TLS_SERVERNAME:-mail.jposta.com}
     depends_on:
       - postgres
       - redis
@@ -82,4 +87,5 @@ services:
 
 networks:
   jposta-network:
+    name: jposta-network
     driver: bridge
