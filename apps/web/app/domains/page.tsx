@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Copy, Globe2, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { Cloud, Copy, Globe2, KeyRound, Plus, RefreshCw, ShieldCheck, X } from "lucide-react";
 
 import {
   AppShell,
@@ -18,6 +18,8 @@ import {
 import {
   type AuthSession,
   type DnsRecord,
+  type DnsPlan,
+  type DnsProviderConnection,
   type Domain,
   jpostaApi,
   type Organization,
@@ -55,6 +57,11 @@ export default function DomainsPage() {
   const [selectedDomain, setSelectedDomain] = React.useState<Domain | null>(null);
   const [dnsRecords, setDnsRecords] = React.useState<DnsRecord[]>([]);
   const [verifyResult, setVerifyResult] = React.useState<VerifyResult | null>(null);
+  const [providerConnection, setProviderConnection] = React.useState<DnsProviderConnection | null>(
+    null,
+  );
+  const [dnsPlan, setDnsPlan] = React.useState<DnsPlan | null>(null);
+  const [applyingDns, setApplyingDns] = React.useState(false);
   const [status, setStatus] = React.useState("Loading domains...");
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
@@ -79,7 +86,11 @@ export default function DomainsPage() {
       const nextOrganization = organizations[0] ?? null;
       setOrganization(nextOrganization);
       if (nextOrganization) saveOrganization(nextOrganization);
-      await loadDomains(activeSession, undefined, nextOrganization);
+      const requestedDomain =
+        new URLSearchParams(window.location.search).get("domainId") ?? undefined;
+      const providerError = new URLSearchParams(window.location.search).get("providerError");
+      if (providerError) setError(providerError);
+      await loadDomains(activeSession, requestedDomain, nextOrganization);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load domains.");
     } finally {
@@ -111,12 +122,24 @@ export default function DomainsPage() {
     if (!activeSession) return;
     setError(null);
     setVerifyResult(null);
-    const [detail, dns] = await Promise.all([
+    const [detail, dns, connection] = await Promise.all([
       jpostaApi.getDomain(activeSession.token, domain.id),
       jpostaApi.getDomainDnsRecords(activeSession.token, domain.id),
+      jpostaApi.domainProviderStatus(activeSession.token, domain.id),
     ]);
     setSelectedDomain(detail);
     setDnsRecords(dns.records);
+    setProviderConnection(connection);
+    if (connection.connected) {
+      try {
+        setDnsPlan(await jpostaApi.previewDnsPlan(activeSession.token, domain.id));
+      } catch (reason) {
+        setDnsPlan(null);
+        setError(reason instanceof Error ? reason.message : "Could not preview DNS changes.");
+      }
+    } else {
+      setDnsPlan(null);
+    }
   }
 
   async function addDomain(formData: FormData) {
@@ -153,6 +176,85 @@ export default function DomainsPage() {
       await loadDomains(session, selectedDomain.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not verify domain.");
+    }
+  }
+
+  async function redetectProvider() {
+    if (!session || !selectedDomain) return;
+    setError(null);
+    try {
+      await jpostaApi.redetectDomainProvider(session.token, selectedDomain.id);
+      await loadDomains(session, selectedDomain.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not detect the DNS provider.");
+    }
+  }
+
+  async function connectCloudflare() {
+    if (!session || !selectedDomain) return;
+    setError(null);
+    try {
+      const result = await jpostaApi.authorizeCloudflare(session.token, selectedDomain.id);
+      window.location.assign(result.authorizationUrl);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Could not start Cloudflare authorization.",
+      );
+    }
+  }
+
+  async function connectNamecheap(formData: FormData) {
+    if (!session || !selectedDomain) return;
+    setError(null);
+    setLoading(true);
+    try {
+      await jpostaApi.connectNamecheap(session.token, selectedDomain.id, {
+        apiUser: formString(formData, "apiUser"),
+        apiKey: formString(formData, "apiKey"),
+      });
+      await openDomain(selectedDomain, session);
+      setStatus("Namecheap connected. Review the DNS changes before applying them.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not connect Namecheap.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function applyDnsPlan() {
+    if (!session || !selectedDomain || !dnsPlan) return;
+    setApplyingDns(true);
+    setError(null);
+    try {
+      const result = await jpostaApi.applyDnsPlan(session.token, selectedDomain.id, {
+        sourceFingerprint: dnsPlan.sourceFingerprint,
+        confirmConflicts: true,
+      });
+      setVerifyResult(result.verification);
+      if (result.verification.verified) {
+        setStatus("Domain verified — provider access has been removed.");
+      } else {
+        setStatus("Records applied. Waiting for public DNS propagation...");
+        for (let attempt = 0; attempt < 24; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 5000));
+          const verification = await jpostaApi.verifyDomain(session.token, selectedDomain.id);
+          setVerifyResult(verification);
+          if (verification.verified) {
+            setStatus("Domain verified — provider access has been removed.");
+            break;
+          }
+        }
+      }
+      await loadDomains(session, selectedDomain.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not apply DNS changes.");
+      try {
+        setDnsPlan(await jpostaApi.previewDnsPlan(session.token, selectedDomain.id));
+      } catch {
+        // The provider error shown above is more useful than a secondary preview failure.
+      }
+    } finally {
+      setApplyingDns(false);
     }
   }
 
@@ -242,6 +344,19 @@ export default function DomainsPage() {
               Verify Domain
             </GlassButton>
           </div>
+          {selectedDomain ? (
+            <ProviderAutomation
+              applying={applyingDns}
+              connection={providerConnection}
+              domain={selectedDomain}
+              loading={loading}
+              plan={dnsPlan}
+              onApply={applyDnsPlan}
+              onCloudflare={connectCloudflare}
+              onNamecheap={connectNamecheap}
+              onRedetect={redetectProvider}
+            />
+          ) : null}
           <GlassDivider className="my-4" />
           <div className="grid gap-3">
             {dnsRecords.map((record) => (
@@ -275,6 +390,157 @@ export default function DomainsPage() {
       ) : null}
     </AppShell>
   );
+}
+
+function ProviderAutomation({
+  applying,
+  connection,
+  domain,
+  loading,
+  plan,
+  onApply,
+  onCloudflare,
+  onNamecheap,
+  onRedetect,
+}: {
+  applying: boolean;
+  connection: DnsProviderConnection | null;
+  domain: Domain;
+  loading: boolean;
+  plan: DnsPlan | null;
+  onApply: () => Promise<void>;
+  onCloudflare: () => Promise<void>;
+  onNamecheap: (formData: FormData) => Promise<void>;
+  onRedetect: () => Promise<void>;
+}) {
+  const [confirmed, setConfirmed] = React.useState(false);
+
+  React.useEffect(() => setConfirmed(false), [plan?.sourceFingerprint]);
+
+  return (
+    <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-4 shadow-inner-glass">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-sky-700">DNS provider</p>
+          <p className="mt-1 font-semibold text-foreground">{providerLabel(domain.dnsProvider)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {domain.detectedNameservers?.join(", ") || "No authoritative nameservers detected."}
+          </p>
+        </div>
+        <GlassButton size="sm" onClick={() => void onRedetect()}>
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+          Detect again
+        </GlassButton>
+      </div>
+
+      {!connection?.connected && domain.dnsProvider === "CLOUDFLARE" ? (
+        <div className="mt-4">
+          <p className="text-sm text-muted-foreground">
+            Log in to Cloudflare and approve temporary Zone Read, DNS Read, and DNS Write access.
+          </p>
+          <GlassButton className="mt-3" variant="primary" onClick={() => void onCloudflare()}>
+            <Cloud className="h-4 w-4" aria-hidden="true" />
+            Connect Cloudflare
+          </GlassButton>
+        </div>
+      ) : null}
+
+      {!connection?.connected && domain.dnsProvider === "NAMECHEAP" ? (
+        <div className="mt-4 grid gap-3">
+          <p className="text-sm leading-6 text-muted-foreground">
+            In Namecheap, enable API access and whitelist JPosta&apos;s IPv4 address
+            {connection?.namecheap.clientIp ? ` (${connection.namecheap.clientIp})` : ""}. JPosta
+            stores the key only until verification completes.
+          </p>
+          {!connection?.namecheap.configured ? (
+            <p className="text-sm font-medium text-amber-700">
+              Namecheap automation is unavailable until NAMECHEAP_CLIENT_IP is configured.
+            </p>
+          ) : null}
+          <form
+            className="grid gap-2 sm:grid-cols-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onNamecheap(new FormData(event.currentTarget));
+            }}
+          >
+            <GlassInput name="apiUser" placeholder="Namecheap API username" required />
+            <GlassInput name="apiKey" placeholder="Namecheap API key" required type="password" />
+            <GlassButton
+              className="sm:col-span-2"
+              disabled={loading || !connection?.namecheap.configured}
+              type="submit"
+              variant="primary"
+            >
+              <KeyRound className="h-4 w-4" aria-hidden="true" />
+              Connect Namecheap
+            </GlassButton>
+          </form>
+        </div>
+      ) : null}
+
+      {!connection?.connected && (!domain.dnsProvider || domain.dnsProvider === "UNKNOWN") ? (
+        <p className="mt-4 text-sm text-muted-foreground">
+          Automatic setup is not available for this provider. Add the DNS records below manually,
+          then select Verify Domain.
+        </p>
+      ) : null}
+
+      {connection?.connected && plan ? (
+        <div className="mt-4 grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-foreground">Review proposed changes</p>
+            <GlassBadge tone={plan.hasConflicts ? "warning" : "success"}>
+              {plan.hasConflicts ? "Mail routing changes" : "Ready"}
+            </GlassBadge>
+          </div>
+          {plan.items.map((item) => (
+            <div
+              className="rounded-xl border border-white/80 bg-white/75 p-3 text-xs"
+              key={item.key}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold uppercase text-foreground">{item.key}</span>
+                <GlassBadge tone={item.action === "CONFLICT" ? "warning" : "neutral"}>
+                  {item.action}
+                </GlassBadge>
+              </div>
+              <p className="mt-1 text-muted-foreground">{item.message}</p>
+              {item.desired ? (
+                <p className="mt-1 break-all font-mono text-[11px] text-foreground">
+                  {item.desired.type} {item.desired.name} → {item.desired.content}
+                </p>
+              ) : null}
+            </div>
+          ))}
+          <label className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
+            <input
+              checked={confirmed}
+              className="mt-0.5"
+              type="checkbox"
+              onChange={(event) => setConfirmed(event.target.checked)}
+            />
+            I approve these DNS changes and understand that replacing MX records changes mail
+            delivery to JPosta.
+          </label>
+          <GlassButton
+            disabled={!confirmed || applying}
+            variant="primary"
+            onClick={() => void onApply()}
+          >
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+            {applying ? "Applying and verifying..." : "Apply records automatically"}
+          </GlassButton>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function providerLabel(provider: Domain["dnsProvider"]) {
+  if (provider === "CLOUDFLARE") return "Cloudflare detected";
+  if (provider === "NAMECHEAP") return "Namecheap detected";
+  return "Provider not recognized";
 }
 
 function DnsRecordCard({ record }: { record: DnsRecord }) {

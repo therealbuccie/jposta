@@ -87,7 +87,7 @@ describe("AuthService identity auth", () => {
     assert.equal(state.mailboxes[0]?.status, MailboxStatus.ACTIVE);
   });
 
-  it("preserves a failed user and mailbox when provisioning fails", async () => {
+  it("creates a usable pending account when mailbox provisioning fails", async () => {
     const state = createState();
     const service = createService(state, {
       createMailbox: async () => {
@@ -95,23 +95,64 @@ describe("AuthService identity auth", () => {
       },
     });
 
-    await assert.rejects(
-      () =>
-        service.register(
-          {
-            fullName: "Failed User",
-            username: "faileduser",
-            password: "Strongpass123",
-            confirmPassword: "Strongpass123",
-          },
-          "register-failure",
-        ),
-      ServiceUnavailableException,
+    const result = await service.register(
+      {
+        fullName: "Pending User",
+        username: "pendinguser",
+        password: "Strongpass123",
+        confirmPassword: "Strongpass123",
+      },
+      "register-failure",
     );
 
-    assert.equal(state.users[0]?.status, UserStatus.FAILED);
+    assert.equal(result.user.status, UserStatus.PENDING_PROVISIONING);
+    assert.equal(
+      result.warning,
+      "Your account is ready, but mailbox provisioning is still pending.",
+    );
+    assert.equal(state.users[0]?.status, UserStatus.PENDING_PROVISIONING);
     assert.equal(state.mailboxes[0]?.status, MailboxStatus.FAILED);
     assert.match(state.mailboxes[0]?.provisioningError ?? "", /Provisioner down/);
+
+    const login = await service.login(
+      { identifier: "pendinguser", password: "Strongpass123" },
+      "login-pending",
+    );
+    assert.equal(login.user.status, UserStatus.PENDING_PROVISIONING);
+  });
+
+  it("resumes a stranded signup only when the original password is supplied", async () => {
+    const state = createState();
+    const service = createService(state, {
+      createMailbox: async () => {
+        throw new ServiceUnavailableException("Provisioner down.");
+      },
+    });
+
+    await service.register(
+      {
+        fullName: "Stranded User",
+        username: "strandeduser",
+        password: "Strongpass123",
+        confirmPassword: "Strongpass123",
+      },
+      "register-stranded",
+    );
+    state.users[0]!.status = UserStatus.FAILED;
+
+    const resumed = await service.register(
+      {
+        fullName: "Stranded User",
+        username: "strandeduser",
+        password: "Strongpass123",
+        confirmPassword: "Strongpass123",
+      },
+      "register-resumed",
+    );
+
+    assert.equal(resumed.user.status, UserStatus.PENDING_PROVISIONING);
+    assert.equal(state.users.length, 1);
+    assert.equal(state.mailboxes.length, 1);
   });
 
   it("logs in with username and full primary email", async () => {

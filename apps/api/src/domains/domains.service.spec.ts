@@ -10,6 +10,7 @@ describe("DomainsService ownership", () => {
       null as never,
       null as never,
       null as never,
+      null as never,
       {
         domain: {
           findFirst: async () => null,

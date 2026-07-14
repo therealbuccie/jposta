@@ -74,7 +74,10 @@ export class MailProvisioningService {
         throw error;
       }
 
-      throw new ServiceUnavailableException("Mail provisioner request failed or timed out.");
+      const details = error instanceof Error ? error.message : String(error);
+      throw new ServiceUnavailableException(
+        `Mail provisioner request failed or timed out. Error: ${details}`,
+      );
     } finally {
       clearTimeout(timer);
     }

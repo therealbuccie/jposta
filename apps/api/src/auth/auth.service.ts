@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { MailboxStatus, MailboxType, UserRole, UserStatus } from "@prisma/client";
@@ -90,10 +89,32 @@ export class AuthService {
       where: {
         OR: [{ username }, { primaryEmail }, { email: primaryEmail }],
       },
-      select: { id: true },
+      select: {
+        id: true,
+        passwordHash: true,
+        status: true,
+      },
     });
 
     if (existingUser) {
+      if (
+        (existingUser.status === UserStatus.FAILED ||
+          existingUser.status === UserStatus.PENDING_PROVISIONING) &&
+        (await verifyPassword(password, existingUser.passwordHash))
+      ) {
+        const resumedUser = await this.prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            name: fullName,
+            recoveryEmail,
+            status: UserStatus.PENDING_PROVISIONING,
+          },
+          select: userSelect,
+        });
+
+        return this.authResponse(resumedUser);
+      }
+
       throw new ConflictException("This JPosta username is already taken.");
     }
 
@@ -161,17 +182,16 @@ export class AuthService {
           provisioningError,
         },
       });
-      await this.prisma.user.update({
+      const pendingUser = await this.prisma.user.update({
         where: { id: user.id },
         data: {
           personalMailboxId: mailbox.id,
-          status: UserStatus.FAILED,
+          status: UserStatus.PENDING_PROVISIONING,
         },
+        select: userSelect,
       });
 
-      throw new ServiceUnavailableException(
-        "Could not provision your personal JPosta mailbox. Please contact support.",
-      );
+      return this.authResponse(pendingUser);
     }
   }
 
@@ -189,11 +209,7 @@ export class AuthService {
       throw new UnauthorizedException("Invalid username or password.");
     }
 
-    if (
-      user.status === UserStatus.PENDING_PROVISIONING ||
-      user.status === UserStatus.FAILED ||
-      user.status === UserStatus.SUSPENDED
-    ) {
+    if (user.status === UserStatus.FAILED || user.status === UserStatus.SUSPENDED) {
       throw new UnauthorizedException("Account is not available for login.");
     }
 
@@ -257,7 +273,9 @@ export class AuthService {
       warning:
         user.status === UserStatus.PENDING_VERIFICATION
           ? "Recovery email verification is pending."
-          : undefined,
+          : user.status === UserStatus.PENDING_PROVISIONING
+            ? "Your account is ready, but mailbox provisioning is still pending."
+            : undefined,
     };
   }
 

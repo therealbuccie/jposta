@@ -8,22 +8,23 @@ datasource db {
 }
 
 model User {
-  id                      String         @id @default(cuid())
-  email                   String         @unique
-  username                String         @unique
-  primaryEmail            String         @unique
+  id                      String            @id @default(cuid())
+  email                   String            @unique
+  username                String            @unique
+  primaryEmail            String            @unique
   recoveryEmail           String?
   recoveryEmailVerifiedAt DateTime?
-  status                  UserStatus     @default(PENDING_PROVISIONING)
-  role                    UserRole       @default(USER)
+  status                  UserStatus        @default(PENDING_PROVISIONING)
+  role                    UserRole          @default(USER)
   name                    String
   passwordHash            String
-  personalMailboxId       String?        @unique
-  personalMailbox         Mailbox?       @relation("UserPersonalMailbox", fields: [personalMailboxId], references: [id], onDelete: SetNull)
-  ownedOrganizations      Organization[] @relation("OrganizationOwner")
-  mailboxes               Mailbox[]      @relation("MailboxUser")
-  createdAt               DateTime       @default(now())
-  updatedAt               DateTime       @updatedAt
+  personalMailboxId       String?           @unique
+  personalMailbox         Mailbox?          @relation("UserPersonalMailbox", fields: [personalMailboxId], references: [id], onDelete: SetNull)
+  ownedOrganizations      Organization[]    @relation("OrganizationOwner")
+  mailboxes               Mailbox[]         @relation("MailboxUser")
+  dnsOAuthAttempts        DnsOAuthAttempt[]
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
 }
 
 model Organization {
@@ -45,41 +46,75 @@ model Organization {
 }
 
 model Domain {
-  id                      String       @id @default(cuid())
-  name                    String       @unique
-  verificationToken       String       @unique
-  status                  DomainStatus @default(PENDING)
+  id                      String                 @id @default(cuid())
+  name                    String                 @unique
+  verificationToken       String                 @unique
+  status                  DomainStatus           @default(PENDING)
   verifiedAt              DateTime?
   lastCheckedAt           DateTime?
   verificationError       String?
-  dkimSelector            String       @default("mail")
+  dnsProvider             DnsProvider            @default(UNKNOWN)
+  detectedNameservers     String[]
+  providerDetectedAt      DateTime?
+  dkimSelector            String                 @default("mail")
   dkimPublicKey           String?
   dkimPrivateKeyEncrypted String?
   organizationId          String
-  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization            Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   mailboxes               Mailbox[]
-  createdAt               DateTime     @default(now())
-  updatedAt               DateTime     @updatedAt
+  providerConnection      DnsProviderConnection?
+  oauthAttempts           DnsOAuthAttempt[]
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+}
+
+model DnsProviderConnection {
+  id                   String                      @id @default(cuid())
+  domainId             String                      @unique
+  provider             DnsProvider
+  status               DnsProviderConnectionStatus @default(CONNECTED)
+  encryptedCredentials String
+  externalZoneId       String?
+  expiresAt            DateTime
+  disconnectedAt       DateTime?
+  domain               Domain                      @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+}
+
+model DnsOAuthAttempt {
+  id        String    @id @default(cuid())
+  stateHash String    @unique
+  domainId  String
+  userId    String
+  returnUrl String
+  expiresAt DateTime
+  usedAt    DateTime?
+  domain    Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+
+  @@index([expiresAt])
 }
 
 model Mailbox {
-  id                 String           @id @default(cuid())
-  address            String           @unique
-  displayName        String
-  type               MailboxType      @default(BUSINESS)
-  status             MailboxStatus    @default(PENDING)
-  provisioningError  String?
-  quotaMb            Int              @default(5120)
-  organizationId     String?
-  domainId           String?
-  userId             String?
-  personalUser       User?            @relation("UserPersonalMailbox")
-  organization       Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  domain             Domain?          @relation(fields: [domainId], references: [id], onDelete: Cascade)
-  user               User?            @relation("MailboxUser", fields: [userId], references: [id], onDelete: SetNull)
-  webmailSessions    WebmailSession[]
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
+  id                String           @id @default(cuid())
+  address           String           @unique
+  displayName       String
+  type              MailboxType      @default(BUSINESS)
+  status            MailboxStatus    @default(PENDING)
+  provisioningError String?
+  quotaMb           Int              @default(5120)
+  organizationId    String?
+  domainId          String?
+  userId            String?
+  personalUser      User?            @relation("UserPersonalMailbox")
+  organization      Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  domain            Domain?          @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  user              User?            @relation("MailboxUser", fields: [userId], references: [id], onDelete: SetNull)
+  webmailSessions   WebmailSession[]
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 }
 
 model WebmailSession {
@@ -129,6 +164,19 @@ enum DomainStatus {
   VERIFYING
   VERIFIED
   ACTIVE
+  FAILED
+}
+
+enum DnsProvider {
+  CLOUDFLARE
+  NAMECHEAP
+  UNKNOWN
+}
+
+enum DnsProviderConnectionStatus {
+  CONNECTED
+  APPLYING
+  AWAITING_PROPAGATION
   FAILED
 }
 

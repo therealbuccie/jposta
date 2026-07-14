@@ -1,8 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { DomainStatus } from "@prisma/client";
 
 import type { AuthenticatedUser } from "../auth/auth.types";
-import { platformDomain } from "../auth/username.utils";
 import { OrganizationsService } from "../organizations/organizations.service";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -11,6 +10,7 @@ import {
   normalizeDomainName,
 } from "./domain.utils";
 import { DomainVerificationService } from "./domain-verification.service";
+import { DnsProviderAutomationService } from "./dns-provider-automation.service";
 import { DkimService } from "./dkim.service";
 
 type AddDomainInput = {
@@ -23,6 +23,7 @@ export class DomainsService {
   constructor(
     private readonly dkimService: DkimService,
     private readonly domainVerificationService: DomainVerificationService,
+    private readonly dnsProviderAutomationService: DnsProviderAutomationService,
     private readonly organizationsService: OrganizationsService,
     private readonly prisma: PrismaService,
   ) {}
@@ -35,7 +36,7 @@ export class DomainsService {
     const name = normalizeDomainName(input.name);
     const dkim = this.dkimService.generateDomainKey();
 
-    return this.prisma.domain.create({
+    const domain = await this.prisma.domain.create({
       data: {
         name,
         organizationId: organization.id,
@@ -44,6 +45,8 @@ export class DomainsService {
         dkimPrivateKeyEncrypted: dkim.encryptedPrivateKey,
       },
     });
+
+    return this.dnsProviderAutomationService.detectAndPersist(domain);
   }
 
   async list(user: AuthenticatedUser) {
@@ -123,6 +126,10 @@ export class DomainsService {
         verificationError: result.verified ? null : "One or more DNS records did not match.",
       },
     });
+
+    if (result.verified) {
+      await this.dnsProviderAutomationService.disconnectAfterVerified(domain.id);
+    }
 
     return result;
   }

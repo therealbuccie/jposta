@@ -8,3 +8,5 @@ coverage
 .env.*.local
 pnpm-lock.yaml
 *.log
+database/
+redis/

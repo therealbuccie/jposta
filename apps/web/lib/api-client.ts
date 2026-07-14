@@ -83,12 +83,44 @@ export type Organization = {
 };
 
 export type Domain = {
+  automationAvailable?: boolean;
+  detectedNameservers?: string[];
+  dnsProvider?: "CLOUDFLARE" | "NAMECHEAP" | "UNKNOWN";
   id: string;
   name: string;
   organization?: { id: string; name: string };
   organizationId?: string;
   status: "PENDING" | "VERIFYING" | "VERIFIED" | "ACTIVE" | "FAILED";
   verificationError?: string | null;
+};
+
+export type DnsProviderConnection = {
+  connected: boolean;
+  expiresAt?: string | null;
+  namecheap: { clientIp?: string; configured: boolean };
+  provider?: "CLOUDFLARE" | "NAMECHEAP" | null;
+  status?: "CONNECTED" | "APPLYING" | "AWAITING_PROPAGATION" | "FAILED" | null;
+};
+
+export type DnsPlanRecord = {
+  content: string;
+  name: string;
+  priority?: number;
+  ttl?: number;
+  type: string;
+};
+
+export type DnsPlan = {
+  hasConflicts: boolean;
+  items: Array<{
+    action: "CREATE" | "UPDATE" | "KEEP" | "CONFLICT";
+    current: DnsPlanRecord[];
+    desired?: DnsPlanRecord;
+    key: "verification" | "mx" | "spf" | "dkim" | "dmarc";
+    message: string;
+  }>;
+  provider: "CLOUDFLARE" | "NAMECHEAP";
+  sourceFingerprint: string;
 };
 
 export type DnsRecord = {
@@ -145,7 +177,6 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
 
   return payload as T;
 }
-
 
 export async function apiFormRequest<T>(path: string, token: string, body: FormData) {
   const response = await fetch(`${env.apiUrl}${path}`, {
@@ -263,6 +294,36 @@ export const jpostaApi = {
     apiRequest<{ domain: string; records: DnsRecord[] }>(`/domains/${id}/dns-records`, { token }),
   verifyDomain: (token: string, id: string) =>
     apiRequest<VerifyResult>(`/domains/${id}/verify`, { token, body: {} }),
+  redetectDomainProvider: (token: string, id: string) =>
+    apiRequest<Domain>(`/domains/${id}/provider/detect`, { token, body: {} }),
+  authorizeCloudflare: (token: string, id: string) =>
+    apiRequest<{ authorizationUrl: string }>(`/domains/${id}/provider/cloudflare/authorize`, {
+      token,
+      body: {},
+    }),
+  connectNamecheap: (token: string, id: string, body: { apiKey: string; apiUser: string }) =>
+    apiRequest<DnsProviderConnection>(`/domains/${id}/provider/namecheap/connect`, {
+      token,
+      body,
+    }),
+  domainProviderStatus: (token: string, id: string) =>
+    apiRequest<DnsProviderConnection>(`/domains/${id}/provider`, { token }),
+  previewDnsPlan: (token: string, id: string) =>
+    apiRequest<DnsPlan>(`/domains/${id}/dns-plan`, { token }),
+  applyDnsPlan: (
+    token: string,
+    id: string,
+    body: { confirmConflicts: boolean; sourceFingerprint: string },
+  ) =>
+    apiRequest<{ applied: boolean; verification: VerifyResult }>(`/domains/${id}/dns-plan/apply`, {
+      token,
+      body,
+    }),
+  disconnectDomainProvider: (token: string, id: string) =>
+    apiRequest<{ disconnected: boolean }>(`/domains/${id}/provider`, {
+      token,
+      method: "DELETE",
+    }),
   listMailboxes: (token: string) => apiRequest<MailboxRecord[]>("/mailboxes", { token }),
   createMailbox: (
     token: string,
@@ -286,6 +347,3 @@ export const jpostaApi = {
   deleteMailbox: (token: string, id: string) =>
     apiRequest<{ deleted: boolean }>(`/mailboxes/${id}`, { method: "DELETE", token }),
 };
-
-
-
