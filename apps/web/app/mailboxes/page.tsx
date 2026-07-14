@@ -244,7 +244,7 @@ export default function MailboxesPage() {
           {loading ? <p className="text-sm text-muted-foreground">Loading mailboxes...</p> : null}
           {!loading && mailboxes.length === 0 ? (
             <div className="rounded-2xl border border-glass-edge/24 bg-white/60 p-4 text-sm text-muted-foreground shadow-inner-glass">
-              No mailboxes yet. Verify a domain, then create admin@golyvin.com.
+              No mailboxes yet. Verify a domain, then create admin@example.com.
             </div>
           ) : null}
           <div className="grid gap-3">
@@ -338,7 +338,7 @@ function CreateMailboxModal({
   const address =
     selectedDomain && localPart
       ? `${localPart.trim().toLowerCase()}@${selectedDomain.name}`
-      : "admin@golyvin.com";
+      : "admin@example.com";
 
   return (
     <Modal title="Create mailbox" onClose={onClose}>

@@ -122,13 +122,13 @@ export function BusinessWorkspaceClient() {
   );
   const mailboxRows = [
     [
-      mailboxes[0]?.address ?? "admin@golyvin.com",
+      mailboxes[0]?.address ?? "admin@example.com",
       mailboxes[0]
         ? `Status: ${mailboxes[0].status}`
         : "Create your first mailbox after DNS verification",
     ],
     [
-      domains[0]?.name ?? "golyvin.com",
+      domains[0]?.name ?? "company.com",
       domains[0]
         ? `Domain status: ${domains[0].status}`
         : "Add a custom domain from the Domains page",
@@ -234,7 +234,7 @@ export function BusinessWorkspaceClient() {
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
                   {domains.length
                     ? `${domains.length} domain${domains.length === 1 ? "" : "s"} connected.`
-                    : "Add golyvin.com from the Domains page."}
+                    : "Add your company domain from the Domains page."}
                 </p>
                 <GlassButton className="mt-4" onClick={() => router.push("/domains")}>
                   Open Domains

@@ -130,7 +130,7 @@ function PortalLogin({ portal }: { portal: PortalInfo }) {
         >
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
             Email address
-            <GlassInput name="email" placeholder="info@golivyn.com" required type="email" />
+            <GlassInput name="email" placeholder="info@example.com" required type="email" />
           </label>
           <label className="grid gap-1 text-xs font-medium text-muted-foreground">
             Password

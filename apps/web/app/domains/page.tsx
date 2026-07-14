@@ -205,7 +205,7 @@ export default function DomainsPage() {
             {loading ? <p className="text-sm text-muted-foreground">Loading domains...</p> : null}
             {!loading && domains.length === 0 ? (
               <div className="rounded-2xl border border-glass-edge/24 bg-white/60 p-4 text-sm text-muted-foreground shadow-inner-glass">
-                No domains yet. Add golyvin.com to begin onboarding.
+                No domains yet. Add your company domain to begin onboarding.
               </div>
             ) : null}
             <div className="grid gap-2">
@@ -237,10 +237,16 @@ export default function DomainsPage() {
                 {selectedDomain?.name ?? "Select a domain"}
               </h2>
             </div>
-            <GlassButton disabled={!selectedDomain} onClick={verifyDomain}>
-              <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-              Verify Domain
-            </GlassButton>
+            <div className="flex flex-wrap gap-2">
+              <GlassButton disabled={!dnsRecords.length} onClick={() => void copyAllDnsRecords(dnsRecords)} variant="glass">
+                <Copy className="h-4 w-4" aria-hidden="true" />
+                Copy All
+              </GlassButton>
+              <GlassButton disabled={!selectedDomain} onClick={verifyDomain}>
+                <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                Verify Domain
+              </GlassButton>
+            </div>
           </div>
           <GlassDivider className="my-4" />
           <div className="grid gap-3">
@@ -266,7 +272,7 @@ export default function DomainsPage() {
               void addDomain(new FormData(event.currentTarget));
             }}
           >
-            <GlassInput name="name" placeholder="golyvin.com" required />
+            <GlassInput name="name" placeholder="company.com" required />
             <GlassButton disabled={!organization || loading} type="submit" variant="primary">
               Add Domain
             </GlassButton>
@@ -277,18 +283,44 @@ export default function DomainsPage() {
   );
 }
 
+function dnsRecordClipboardValue(record: DnsRecord) {
+  return [
+    `Type: ${record.type}`,
+    `Host: ${record.name}`,
+    record.priority ? `Priority: ${record.priority}` : null,
+    `Value: ${record.value}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function copyDnsRecord(record: DnsRecord) {
+  await navigator.clipboard.writeText(dnsRecordClipboardValue(record));
+}
+
+async function copyAllDnsRecords(records: DnsRecord[]) {
+  await navigator.clipboard.writeText(records.map(dnsRecordClipboardValue).join("\n\n"));
+}
 function DnsRecordCard({ record }: { record: DnsRecord }) {
   return (
     <div className="rounded-2xl border border-glass-edge/24 bg-white/64 p-3 shadow-inner-glass">
       <div className="mb-2 flex items-center justify-between gap-2">
         <GlassBadge>{record.type}</GlassBadge>
-        <GlassButton size="sm" onClick={() => navigator.clipboard.writeText(record.value)}>
+        <GlassButton size="sm" onClick={() => void copyDnsRecord(record)}>
           <Copy className="h-4 w-4" aria-hidden="true" />
           Copy
         </GlassButton>
       </div>
-      <p className="text-sm font-semibold text-foreground">{record.name}</p>
-      <p className="mt-1 break-all text-xs leading-5 text-muted-foreground">{record.value}</p>
+      <div className="grid gap-2 text-sm">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Host</p>
+          <p className="break-all font-semibold text-foreground">{record.name}</p>
+        </div>
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Value</p>
+          <p className="break-all text-xs leading-5 text-muted-foreground">{record.value}</p>
+        </div>
+      </div>
       {record.priority ? (
         <p className="mt-1 text-xs text-muted-foreground">Priority {record.priority}</p>
       ) : null}
@@ -364,7 +396,7 @@ function normalizeDomainInput(value: string) {
   const domain = value.trim().toLowerCase();
 
   if (domain.includes("://") || domain.includes("/") || domain.includes("@")) {
-    throw new Error("Enter only the domain name, for example golyvin.com.");
+    throw new Error("Enter only the domain name, for example company.com.");
   }
 
   if (!/^(?!-)(?:[a-z0-9-]{1,63}\.)+[a-z]{2,63}$/.test(domain)) {

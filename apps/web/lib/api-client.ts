@@ -94,7 +94,7 @@ export type Domain = {
 export type DnsRecord = {
   name: string;
   priority?: number;
-  type: "TXT" | "MX";
+  type: "A" | "TXT" | "MX";
   value: string;
 };
 
@@ -286,6 +286,3 @@ export const jpostaApi = {
   deleteMailbox: (token: string, id: string) =>
     apiRequest<{ deleted: boolean }>(`/mailboxes/${id}`, { method: "DELETE", token }),
 };
-
-
-

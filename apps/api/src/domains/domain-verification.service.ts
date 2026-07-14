@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 import { promises as dns } from "node:dns";
 
+import { domainDnsConfigFromEnv } from "./domain.utils";
+
 export type DnsCheck = {
   actual: string[];
   expected: string;
@@ -25,9 +27,10 @@ export class DomainVerificationService {
     name: string;
     verificationToken: string;
   }): Promise<DomainVerificationResult> {
+    const config = domainDnsConfigFromEnv();
     const verificationExpected = `jposta-verification=${input.verificationToken}`;
-    const mxExpected = "mail.jposta.com";
-    const spfExpected = "include:_spf.jposta.com";
+    const mxExpected = config.mailHostname;
+    const spfExpected = `include:${config.spfInclude}`;
     const dkimExpected = input.dkimPublicKey || "DKIM TXT record";
 
     const verificationTxt = await resolveTxt(`_jposta-verification.${input.name}`);
