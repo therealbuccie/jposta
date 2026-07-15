@@ -30,21 +30,26 @@ export function sanitizeEmailHtml(html: string | false | undefined) {
   if (!html) return "";
   return sanitizeHtml(html, {
     allowedTags: sanitizeHtml.defaults.allowedTags
-      .filter((tag) => !["form", "iframe", "script"].includes(tag))
-      .concat(["img"]),
+      .filter((tag) => !["embed", "form", "iframe", "object", "script"].includes(tag))
+      .concat(["button", "img", "tbody", "td", "tfoot", "th", "thead", "tr"]),
     allowedAttributes: {
       ...sanitizeHtml.defaults.allowedAttributes,
-      img: ["alt", "title"],
       a: ["href", "name", "target", "rel"],
+      button: ["type"],
+      img: ["src", "srcset", "alt", "title", "width", "height", "loading", "decoding"],
+      table: ["align", "border", "cellpadding", "cellspacing", "role", "width"],
+      td: ["align", "colspan", "rowspan", "valign", "width"],
+      th: ["align", "colspan", "rowspan", "scope", "valign", "width"],
     },
     transformTags: {
-      img: () => ({ tagName: "span", attribs: {}, text: "[remote image blocked]" }),
       a: sanitizeHtml.simpleTransform("a", { rel: "noreferrer noopener", target: "_blank" }),
     },
-    allowedSchemes: ["http", "https", "mailto"],
+    allowedSchemes: ["cid", "http", "https", "mailto"],
+    allowedSchemesByTag: {
+      img: ["cid", "http", "https"],
+    },
   });
 }
-
 export function sanitizeFilename(value: string | undefined, fallback = "attachment") {
   const name = (value || fallback)
     .replace(/[\0\\/]/g, "_")
