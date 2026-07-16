@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import { AlignCenter, AlignLeft, AlignRight, Archive, ArrowLeft, Bell, Bold, Calendar, ChevronDown, ChevronRight, Cloud, Code, Download, Forward, Folder, Image, Inbox, Italic, Link, List, Mail, MailPlus, Maximize2, Menu, Mic, Minimize2, Moon, MoreHorizontal, Paperclip, Quote, Redo2, RefreshCw, Reply, ReplyAll, Save, Search, Send, Settings, ShieldAlert, Smile, Sparkles, Star, Trash2, Underline, Undo2, Users, X } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Archive, ArrowLeft, Bell, Bold, Calendar, Check, ChevronDown, ChevronRight, Cloud, Code, Command, Download, Forward, Folder, Image, Inbox, Italic, Link, List, LogOut, Mail, MailPlus, Maximize2, Menu, Mic, Minimize2, Monitor, Moon, MoreHorizontal, Paperclip, Quote, Redo2, RefreshCw, Reply, ReplyAll, Save, Search, Send, Settings, ShieldAlert, Smile, Sparkles, Star, Sun, Trash2, Underline, Undo2, User, Users, X } from "lucide-react";
 import { GlassButton, GlassInput } from "@jposta/ui";
 import { jpostaApi, type WebmailFolder, type WebmailMe, type WebmailMessage, type WebmailMessageDetail } from "@/lib/api-client";
 import { clearWebmailSession, getStoredWebmailSession } from "@/lib/webmail-session";
@@ -12,10 +12,20 @@ type Notice = { message: string; tone: "info" | "success" | "error" };
 type ComposeState = { attachments: File[]; bcc: string; body: string; cc: string; draftUid?: number; inReplyTo?: string; mode: ComposeMode; open: boolean; references?: string; subject: string; to: string };
 type MessagePage = { folder: string; hasMore: boolean; messages: WebmailMessage[]; page: number; pageSize: number; total: number };
 type FolderNavItem = { folder?: WebmailFolder | undefined; icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>; label: string; path: string };
+type TopbarPanel = "command" | "theme" | "notifications" | "settings" | "profile" | null;
+type ThemeMode = "light" | "dark" | "system";
+type DensityMode = "compact" | "comfortable";
+type EmployeePreferences = { autoMarkRead: boolean; autoSaveDrafts: boolean; confirmDelete: boolean; defaultComposeMode: "window" | "focus"; density: DensityMode; defaultCcBcc: boolean; refreshInterval: string; remoteImages: boolean; theme: ThemeMode };
+type UiNotification = { description: string; id: string; read: boolean; timestamp: number; title: string; tone?: Notice["tone"] };
+type CommandItem = { action: () => void; disabled?: boolean; hint?: string; label: string };
 
 const pageSize = 25;
 const blankPage: MessagePage = { folder: "INBOX", hasMore: false, messages: [], page: 1, pageSize, total: 0 };
 const blankCompose: ComposeState = { attachments: [], bcc: "", body: "", cc: "", mode: "compose", open: false, subject: "", to: "" };
+const employeePrefsKey = "jposta.employee.preferences";
+const employeeNotificationsKey = "jposta.employee.notifications";
+const defaultEmployeePreferences: EmployeePreferences = { autoMarkRead: true, autoSaveDrafts: true, confirmDelete: true, defaultComposeMode: "window", defaultCcBcc: false, density: "comfortable", refreshInterval: "45", remoteImages: true, theme: "system" };
+
 const primaryFolderConfig = [
   { label: "Inbox", aliases: ["inbox"], icon: Inbox },
   { label: "Sent", aliases: ["sent"], icon: Send },
@@ -44,6 +54,12 @@ export function EmployeeWorkspaceClient() {
   const [compose, setCompose] = React.useState<ComposeState>(blankCompose);
   const [sending, setSending] = React.useState(false);
   const [savingDraft, setSavingDraft] = React.useState(false);
+  const [topbarPanel, setTopbarPanel] = React.useState<TopbarPanel>(null);
+  const [commandQuery, setCommandQuery] = React.useState("");
+  const [commandIndex, setCommandIndex] = React.useState(0);
+  const [preferences, setPreferences] = React.useState<EmployeePreferences>(defaultEmployeePreferences);
+  const [systemDark, setSystemDark] = React.useState(false);
+  const [notifications, setNotifications] = React.useState<UiNotification[]>([]);
 
   const mailbox = identity?.mailbox.address ?? "";
   const displayName = friendlyName(identity?.mailbox.displayName, mailbox);
@@ -54,9 +70,13 @@ export function EmployeeWorkspaceClient() {
   const customFolders = makeCustomFolders(folders, folderNav);
   const unreadCount = folder?.unread ?? page.messages.filter((message) => message.unread).length;
   const archivePath = findFolder(folders, "Archive")?.path;
+  const effectiveTheme = preferences.theme === "system" ? (systemDark ? "dark" : "light") : preferences.theme;
+  const unreadNotifications = notifications.filter((item) => !item.read).length + (unreadCount > 0 ? 1 : 0);
 
-  const showNotice = React.useCallback((message: string, tone: Notice["tone"] = "info") => { setNotice({ message, tone }); window.setTimeout(() => setNotice(null), 3500); }, []);
+  const showNotice = React.useCallback((message: string, tone: Notice["tone"] = "info") => { setNotice({ message, tone }); window.setTimeout(() => setNotice(null), 3500); setNotifications((current) => persistNotifications([{ id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, title: tone === "error" ? "Mailbox needs attention" : message, description: message, read: false, timestamp: Date.now(), tone }, ...current].slice(0, 12))); }, []);
   const expire = React.useCallback(() => { clearWebmailSession(); window.location.assign(window.location.origin); }, []);
+  const signOut = React.useCallback(() => { clearWebmailSession(); window.location.assign(window.location.origin); }, []);
+  const openPanel = React.useCallback((panel: Exclude<TopbarPanel, null>) => { setTopbarPanel((current) => current === panel ? null : panel); if (panel === "command") { setCommandQuery(""); setCommandIndex(0); } }, []);
 
   const loadMessages = React.useCallback(async (activeToken: string, nextFolder: string, nextPage = 1, nextSearch = search, keep = false) => {
     setMessagesLoading(true); setError(null);
@@ -81,6 +101,35 @@ export function EmployeeWorkspaceClient() {
   }, [activeFolder, expire, loadMessages, page.page, search, token]);
 
   React.useEffect(() => {
+    setPreferences(readEmployeePreferences());
+    setNotifications(readStoredNotifications());
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncSystemTheme = () => setSystemDark(media.matches);
+    syncSystemTheme();
+    media.addEventListener("change", syncSystemTheme);
+    return () => media.removeEventListener("change", syncSystemTheme);
+  }, []);
+
+  React.useEffect(() => {
+    document.documentElement.dataset.jpostaEmployeeTheme = effectiveTheme;
+    return () => { delete document.documentElement.dataset.jpostaEmployeeTheme; };
+  }, [effectiveTheme]);
+
+  React.useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = Boolean(target?.closest("input, textarea, [contenteditable='true']"));
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !typing) {
+        event.preventDefault();
+        openPanel("command");
+        return;
+      }
+      if (event.key === "Escape") setTopbarPanel(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openPanel]);
+  React.useEffect(() => {
     const stored = getStoredWebmailSession();
     if (!stored) { setLoading(false); setError("Loading your mailbox failed. Please sign in from your company portal."); return; }
     setToken(stored.token);
@@ -99,12 +148,28 @@ export function EmployeeWorkspaceClient() {
   }, [activeFolder, refresh, token]);
 
   React.useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && compose.open) void closeComposer(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && compose.open && !topbarPanel) void closeComposer(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+    // closeComposer intentionally stays as the existing async discard flow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compose.open, topbarPanel]);
 
-  async function openFolder(path: string) { setSidebarOpen(false); if (token) await loadMessages(token, path, 1, search, false); }
+  function updatePreferences(patch: Partial<EmployeePreferences>) {
+    setPreferences((current) => persistPreferences({ ...current, ...patch }));
+  }
+  function markNotificationsRead() { setNotifications((current) => persistNotifications(current.map((item) => ({ ...item, read: true })))); }
+  function clearNotifications() { setNotifications(persistNotifications([])); }
+  const commandItems: CommandItem[] = [
+    { action: () => { beginCompose("compose"); setTopbarPanel(null); }, hint: "Ctrl Shift C", label: "Compose new message" },
+    ...folderNav.map((item) => ({ action: () => { void openFolder(item.path); setTopbarPanel(null); }, label: `Open ${item.label}` })),
+    { action: () => { void refresh(); setTopbarPanel(null); }, disabled: !token, label: "Refresh mailbox" },
+    { action: () => { setTopbarPanel(null); window.setTimeout(() => document.querySelector<HTMLInputElement>("input[aria-label='Search emails, contacts, files']")?.focus(), 0); }, label: "Search mail" },
+    { action: () => { void setRead(); setTopbarPanel(null); }, disabled: !selected, label: selected?.unread ? "Mark selected message read" : "Mark selected message unread" },
+    { action: () => { void toggleStar(); setTopbarPanel(null); }, disabled: !selected, label: selected?.starred ? "Unstar selected message" : "Star selected message" },
+    { action: () => openPanel("settings"), label: "Open Settings" },
+    { action: signOut, label: "Sign out" },
+  ];  async function openFolder(path: string) { setSidebarOpen(false); if (token) await loadMessages(token, path, 1, search, false); }
   async function openMessage(message: WebmailMessage) {
     if (!token) return;
     setSelectedUid(message.uid); setDetailLoading(true); setError(null);
@@ -220,9 +285,9 @@ export function EmployeeWorkspaceClient() {
             <button aria-label="Open folders" className="inline-flex h-8 w-8 items-center justify-center rounded-2xl border border-white/70 bg-white/70 text-blue-900 shadow-sm lg:hidden" onClick={() => setSidebarOpen(true)} type="button"><Menu className="h-5 w-5" aria-hidden="true" /></button>
             <Search className="ml-1 h-5 w-5 shrink-0 text-blue-900" aria-hidden="true" />
             <input aria-label="Search emails, contacts, files" className="h-8 min-w-0 flex-1 bg-transparent text-sm text-blue-950 outline-none placeholder:text-slate-500" onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && token) void loadMessages(token, activeFolder, 1, search, false); }} placeholder="Search emails, contacts, files..." value={search} />
-            <kbd className="hidden rounded-full border border-blue-100 bg-white/80 px-2.5 py-1 text-[11px] font-medium text-blue-900 sm:inline-flex">Ctrl K</kbd>
+            <button aria-controls="employee-command-palette" aria-expanded={topbarPanel === "command"} aria-label="Open command palette" className="hidden rounded-full border border-blue-100 bg-white/80 px-2.5 py-1 text-[11px] font-medium text-blue-900 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 sm:inline-flex" onClick={() => openPanel("command")} type="button"><Command className="mr-1 h-3 w-3" aria-hidden="true" />Ctrl K</button>
           </div>
-          <div className="hidden items-center justify-end gap-2 lg:flex"><TopIconButton label="Theme"><Moon className="h-5 w-5" aria-hidden="true" /></TopIconButton><TopIconButton label="Notifications"><Bell className="h-5 w-5" aria-hidden="true" /></TopIconButton><TopIconButton label="Settings"><Settings className="h-5 w-5" aria-hidden="true" /></TopIconButton><div className="flex min-w-[13.5rem] items-center gap-2 rounded-[1.1rem] border border-white/70 bg-white/50 px-3 py-1.5 shadow-[0_18px_60px_rgba(30,64,175,0.12)] backdrop-blur-2xl"><Avatar name={displayName} /><div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-blue-950">{displayName}</p><p className="truncate text-xs text-slate-500">{mailbox || "Mailbox"}</p></div><ChevronDown className="h-4 w-4 text-blue-900" aria-hidden="true" /></div></div>
+          <div className="flex items-center justify-end gap-2"><TopIconButton ariaControls="employee-theme-menu" expanded={topbarPanel === "theme"} label="Theme" onClick={() => openPanel("theme")}><Moon className="h-5 w-5" aria-hidden="true" /></TopIconButton><TopIconButton ariaControls="employee-notifications" badge={unreadNotifications} expanded={topbarPanel === "notifications"} label="Notifications" onClick={() => openPanel("notifications")}><Bell className="h-5 w-5" aria-hidden="true" /></TopIconButton><TopIconButton ariaControls="employee-settings" expanded={topbarPanel === "settings"} label="Settings" onClick={() => openPanel("settings")}><Settings className="h-5 w-5" aria-hidden="true" /></TopIconButton><button aria-controls="employee-profile-menu" aria-expanded={topbarPanel === "profile"} aria-label="Open profile menu" className="flex min-w-0 items-center gap-2 rounded-[1.1rem] border border-white/70 bg-white/50 px-2.5 py-1.5 shadow-[0_18px_60px_rgba(30,64,175,0.12)] backdrop-blur-2xl transition hover:bg-white/70 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:min-w-[11rem] lg:min-w-[13.5rem]" onClick={() => openPanel("profile")} type="button"><Avatar name={displayName} /><div className="hidden min-w-0 flex-1 text-left sm:block"><p className="truncate text-[13px] font-semibold text-blue-950">{displayName}</p><p className="truncate text-xs text-slate-500">{mailbox || "Mailbox"}</p></div><ChevronDown className="h-4 w-4 shrink-0 text-blue-900" aria-hidden="true" /></button></div>
         </header>
         <main className="grid min-h-0 flex-1 gap-2 overflow-hidden lg:grid-cols-[15rem_minmax(24rem,28rem)_minmax(0,1fr)] xl:grid-cols-[15.5rem_minmax(25rem,29rem)_minmax(0,1fr)]">
           <aside className={`${sidebarOpen ? "fixed inset-3 z-50 flex" : "hidden"} min-h-0 min-w-0 flex-col rounded-[1.15rem] border border-white/70 bg-white/56 shadow-[0_30px_90px_rgba(30,64,175,0.18)] backdrop-blur-2xl lg:relative lg:inset-auto lg:z-auto lg:flex`}>
@@ -254,7 +319,30 @@ export function EmployeeWorkspaceClient() {
           </section>
         </main>
       </div>
-      {compose.open ? (
+      <TopbarOverlays
+        activeFolder={activeFolder}
+        commandIndex={commandIndex}
+        commandItems={commandItems}
+        commandQuery={commandQuery}
+        displayName={displayName}
+        effectiveTheme={effectiveTheme}
+        mailbox={mailbox}
+        notifications={notifications}
+        onClearNotifications={clearNotifications}
+        onClose={() => setTopbarPanel(null)}
+        onCommandIndexChange={setCommandIndex}
+        onCommandQueryChange={setCommandQuery}
+        onMarkNotificationsRead={markNotificationsRead}
+        onPreferencesChange={updatePreferences}
+        onSignOut={signOut}
+        openPanel={openPanel}
+        panel={topbarPanel}
+        preferences={preferences}
+        setNotifications={setNotifications}
+        storageText="Mailbox storage available"
+        unreadCount={unreadCount}
+        workspace={workspace}
+      />      {compose.open ? (
         <ComposeWindow
           compose={compose}
           mailbox={mailbox}
@@ -270,6 +358,54 @@ export function EmployeeWorkspaceClient() {
     </div>
   );
 }
+function TopbarOverlays({ activeFolder, commandIndex, commandItems, commandQuery, displayName, effectiveTheme, mailbox, notifications, onClearNotifications, onClose, onCommandIndexChange, onCommandQueryChange, onMarkNotificationsRead, onPreferencesChange, onSignOut, openPanel, panel, preferences, setNotifications, storageText, unreadCount, workspace }: { activeFolder: string; commandIndex: number; commandItems: CommandItem[]; commandQuery: string; displayName: string; effectiveTheme: "light" | "dark"; mailbox: string; notifications: UiNotification[]; onClearNotifications: () => void; onClose: () => void; onCommandIndexChange: (value: number) => void; onCommandQueryChange: (value: string) => void; onMarkNotificationsRead: () => void; onPreferencesChange: (patch: Partial<EmployeePreferences>) => void; onSignOut: () => void; openPanel: (panel: Exclude<TopbarPanel, null>) => void; panel: TopbarPanel; preferences: EmployeePreferences; setNotifications: React.Dispatch<React.SetStateAction<UiNotification[]>>; storageText: string; unreadCount: number; workspace: string }) {
+  const filteredCommands = commandItems.filter((item) => item.label.toLowerCase().includes(commandQuery.toLowerCase().trim()));
+  React.useEffect(() => { onCommandIndexChange(0); }, [commandQuery, onCommandIndexChange]);
+  if (!panel) return null;
+  return (
+    <div className="fixed inset-0 z-[55] overflow-hidden" onMouseDown={onClose}>
+      {panel === "command" ? <CommandPalette commandIndex={commandIndex} commands={filteredCommands} onCommandIndexChange={onCommandIndexChange} onQueryChange={onCommandQueryChange} query={commandQuery} /> : null}
+      {panel === "theme" ? <ThemeMenu effectiveTheme={effectiveTheme} onChange={(theme) => onPreferencesChange({ theme })} preferences={preferences} /> : null}
+      {panel === "notifications" ? <NotificationPanel notifications={notifications} onClear={onClearNotifications} onMarkRead={onMarkNotificationsRead} setNotifications={setNotifications} unreadCount={unreadCount} /> : null}
+      {panel === "settings" ? <SettingsDrawer onChange={onPreferencesChange} preferences={preferences} /> : null}
+      {panel === "profile" ? <ProfileMenu activeFolder={activeFolder} displayName={displayName} mailbox={mailbox} onOpenSettings={() => openPanel("settings")} onSignOut={onSignOut} storageText={storageText} workspace={workspace} /> : null}
+    </div>
+  );
+}
+
+function CommandPalette({ commandIndex, commands, onCommandIndexChange, onQueryChange, query }: { commandIndex: number; commands: CommandItem[]; onCommandIndexChange: (value: number) => void; onQueryChange: (value: string) => void; query: string }) {
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => { inputRef.current?.focus(); }, []);
+  return <div aria-modal="true" className="mx-auto mt-[12vh] w-[min(46rem,calc(100vw-1.5rem))] rounded-[1.75rem] border border-white/75 bg-white/88 p-3 shadow-[0_32px_110px_rgba(30,64,175,0.28)] backdrop-blur-2xl" onMouseDown={(event) => event.stopPropagation()} role="dialog" id="employee-command-palette"><div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-white/80 px-4 py-3"><Command className="h-5 w-5 text-blue-700" aria-hidden="true" /><input ref={inputRef} aria-label="Search commands" className="min-w-0 flex-1 bg-transparent text-sm text-blue-950 outline-none placeholder:text-slate-400" onChange={(event) => onQueryChange(event.target.value)} onKeyDown={(event) => { if (event.key === "ArrowDown") { event.preventDefault(); onCommandIndexChange(Math.min(commands.length - 1, commandIndex + 1)); } if (event.key === "ArrowUp") { event.preventDefault(); onCommandIndexChange(Math.max(0, commandIndex - 1)); } if (event.key === "Enter") { event.preventDefault(); const command = commands[commandIndex]; if (command && !command.disabled) command.action(); } }} placeholder="Search emails, contacts, commands..." value={query} /><kbd className="rounded-full border border-blue-100 bg-white px-2 py-1 text-[11px] text-blue-900">Esc</kbd></div><div className="mt-3 max-h-[50vh] overflow-y-auto pr-1" role="listbox">{commands.length ? commands.map((command, index) => <button aria-disabled={command.disabled} className={`flex w-full items-center justify-between rounded-2xl px-4 py-3 text-left text-sm transition ${index === commandIndex ? "bg-blue-50 text-blue-950" : "text-slate-700 hover:bg-white/70"} ${command.disabled ? "cursor-not-allowed opacity-45" : ""}`} disabled={command.disabled} key={command.label} onMouseEnter={() => onCommandIndexChange(index)} onClick={() => command.action()} role="option" type="button"><span>{command.label}</span>{command.hint ? <span className="text-xs text-slate-400">{command.hint}</span> : null}</button>) : <p className="px-4 py-8 text-center text-sm text-slate-500">No commands found.</p>}</div></div>;
+}
+
+function ThemeMenu({ effectiveTheme, onChange, preferences }: { effectiveTheme: "light" | "dark"; onChange: (theme: ThemeMode) => void; preferences: EmployeePreferences }) {
+  const modes: Array<{ icon: React.ReactNode; label: string; value: ThemeMode }> = [{ icon: <Sun className="h-4 w-4" aria-hidden="true" />, label: "Light", value: "light" }, { icon: <Moon className="h-4 w-4" aria-hidden="true" />, label: "Dark", value: "dark" }, { icon: <Monitor className="h-4 w-4" aria-hidden="true" />, label: `System (${effectiveTheme})`, value: "system" }];
+  return <div className="absolute right-40 top-16 w-56 rounded-3xl border border-white/75 bg-white/90 p-2 shadow-[0_24px_80px_rgba(30,64,175,0.2)] backdrop-blur-2xl" id="employee-theme-menu" onMouseDown={(event) => event.stopPropagation()} role="menu">{modes.map((mode) => <button className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-blue-950 transition hover:bg-blue-50" key={mode.value} onClick={() => onChange(mode.value)} role="menuitemradio" type="button">{mode.icon}<span className="flex-1 text-left">{mode.label}</span>{preferences.theme === mode.value ? <Check className="h-4 w-4 text-blue-600" aria-hidden="true" /> : null}</button>)}</div>;
+}
+
+function NotificationPanel({ notifications, onClear, onMarkRead, setNotifications, unreadCount }: { notifications: UiNotification[]; onClear: () => void; onMarkRead: () => void; setNotifications: React.Dispatch<React.SetStateAction<UiNotification[]>>; unreadCount: number }) {
+  const liveItems = unreadCount ? [{ id: "live-unread", title: "Unread mail", description: `${unreadCount} unread message${unreadCount === 1 ? "" : "s"} in this folder.`, read: false, timestamp: Date.now() } satisfies UiNotification, ...notifications] : notifications;
+  return <div className="absolute right-24 top-16 w-[min(24rem,calc(100vw-1rem))] rounded-3xl border border-white/75 bg-white/90 p-3 shadow-[0_24px_80px_rgba(30,64,175,0.2)] backdrop-blur-2xl" id="employee-notifications" onMouseDown={(event) => event.stopPropagation()} role="dialog"><div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-blue-950">Notifications</h2><div className="flex gap-2"><button className="text-xs font-medium text-blue-700" onClick={onMarkRead} type="button">Mark all read</button><button className="text-xs font-medium text-slate-500" onClick={() => { onClear(); setNotifications(persistNotifications([])); }} type="button">Clear</button></div></div>{liveItems.length ? <div className="grid max-h-[22rem] gap-2 overflow-y-auto">{liveItems.map((item) => <div className="rounded-2xl border border-blue-100 bg-white/70 p-3" key={item.id}><div className="flex items-start gap-2"><span className={`mt-1 h-2 w-2 rounded-full ${item.read ? "bg-slate-300" : "bg-blue-500"}`} /><div className="min-w-0"><p className="text-sm font-semibold text-blue-950">{item.title}</p><p className="mt-1 text-xs leading-5 text-slate-500">{item.description}</p><time className="mt-2 block text-[11px] text-slate-400">{relativeTime(item.timestamp)}</time></div></div></div>)}</div> : <div className="rounded-2xl border border-blue-100 bg-white/70 p-8 text-center text-sm text-slate-500">You&apos;re all caught up</div>}</div>;
+}
+
+function SettingsDrawer({ onChange, preferences }: { onChange: (patch: Partial<EmployeePreferences>) => void; preferences: EmployeePreferences }) {
+  return <aside aria-modal="true" className="absolute right-3 top-3 flex h-[calc(100dvh-1.5rem)] w-[min(28rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-[1.75rem] border border-white/75 bg-white/92 shadow-[0_30px_100px_rgba(30,64,175,0.24)] backdrop-blur-2xl" id="employee-settings" onMouseDown={(event) => event.stopPropagation()} role="dialog"><header className="border-b border-blue-100 p-5"><h2 className="text-lg font-semibold text-blue-950">Settings</h2><p className="mt-1 text-sm text-slate-500">Frontend preferences for this mailbox.</p></header><div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5"><SettingsSection title="Appearance"><SegmentedPreference options={["light", "dark", "system"]} value={preferences.theme} onChange={(value) => onChange({ theme: value as ThemeMode })} /><SegmentedPreference options={["compact", "comfortable"]} value={preferences.density} onChange={(value) => onChange({ density: value as DensityMode })} /></SettingsSection><SettingsSection title="Mail"><TogglePreference checked={preferences.autoMarkRead} label="Automatically mark message as read when opened" onChange={(value) => onChange({ autoMarkRead: value })} /><TogglePreference checked={preferences.confirmDelete} label="Confirm before deleting" onChange={(value) => onChange({ confirmDelete: value })} /><TogglePreference checked={preferences.remoteImages} label="Show remote images" onChange={(value) => onChange({ remoteImages: value })} /><label className="grid gap-1 text-sm text-blue-950">Refresh interval<select className="h-10 rounded-2xl border border-blue-100 bg-white/80 px-3 outline-none" onChange={(event) => onChange({ refreshInterval: event.target.value })} value={preferences.refreshInterval}><option value="30">30 seconds</option><option value="45">45 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option></select></label></SettingsSection><SettingsSection title="Compose"><TogglePreference checked={preferences.defaultCcBcc} label="Show Cc/Bcc by default" onChange={(value) => onChange({ defaultCcBcc: value })} /><TogglePreference checked={preferences.autoSaveDrafts} label="Auto-save drafts" onChange={(value) => onChange({ autoSaveDrafts: value })} /><SegmentedPreference options={["window", "focus"]} value={preferences.defaultComposeMode} onChange={(value) => onChange({ defaultComposeMode: value as EmployeePreferences["defaultComposeMode"] })} /><div className="rounded-2xl border border-dashed border-blue-200 bg-blue-50/50 p-3 text-sm text-slate-500">Signature support is coming soon.</div></SettingsSection></div></aside>;
+}
+
+function ProfileMenu({ activeFolder, displayName, mailbox, onOpenSettings, onSignOut, storageText, workspace }: { activeFolder: string; displayName: string; mailbox: string; onOpenSettings: () => void; onSignOut: () => void; storageText: string; workspace: string }) {
+  return <div className="absolute right-3 top-16 w-[min(22rem,calc(100vw-1rem))] rounded-3xl border border-white/75 bg-white/92 p-3 shadow-[0_24px_80px_rgba(30,64,175,0.2)] backdrop-blur-2xl" id="employee-profile-menu" onMouseDown={(event) => event.stopPropagation()} role="menu"><div className="flex items-center gap-3 rounded-2xl bg-blue-50/70 p-3"><Avatar name={displayName} /><div className="min-w-0"><p className="truncate text-sm font-semibold text-blue-950">{displayName}</p><p className="truncate text-xs text-slate-500">{mailbox || "Mailbox"}</p><p className="mt-1 text-[11px] text-blue-700">{workspace} / {activeFolder}</p></div></div><div className="mt-3 rounded-2xl border border-blue-100 bg-white/70 p-3 text-xs text-slate-500"><p className="font-medium text-blue-950">Mailbox status: Active</p><p className="mt-1">{storageText}</p></div><div className="mt-3 grid gap-1"><MenuAction icon={<Settings className="h-4 w-4" aria-hidden="true" />} label="Account settings" onClick={onOpenSettings} /><MenuAction icon={<User className="h-4 w-4" aria-hidden="true" />} label="Change password" disabled /><MenuAction icon={<Smile className="h-4 w-4" aria-hidden="true" />} label="Help" disabled /><MenuAction icon={<LogOut className="h-4 w-4" aria-hidden="true" />} label="Sign out" onClick={onSignOut} /></div></div>;
+}
+
+function SettingsSection({ children, title }: { children: React.ReactNode; title: string }) { return <section className="grid gap-3"><h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{title}</h3>{children}</section>; }
+function TogglePreference({ checked, label, onChange }: { checked: boolean; label: string; onChange: (checked: boolean) => void }) { return <label className="flex items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-white/70 px-3 py-2.5 text-sm text-blue-950"><span>{label}</span><input checked={checked} className="h-4 w-4 accent-blue-600" onChange={(event) => onChange(event.target.checked)} type="checkbox" /></label>; }
+function SegmentedPreference({ onChange, options, value }: { onChange: (value: string) => void; options: string[]; value: string }) { return <div className="flex rounded-2xl border border-blue-100 bg-white/70 p-1">{options.map((option) => <button className={`flex-1 rounded-xl px-3 py-2 text-sm capitalize transition ${value === option ? "bg-blue-100 text-blue-700" : "text-slate-500 hover:bg-white"}`} key={option} onClick={() => onChange(option)} type="button">{option}</button>)}</div>; }
+function MenuAction({ disabled, icon, label, onClick }: { disabled?: boolean; icon: React.ReactNode; label: string; onClick?: () => void }) { return <button className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-blue-950 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-45" disabled={disabled} onClick={onClick} role="menuitem" type="button">{icon}<span>{label}</span>{disabled ? <span className="ml-auto text-xs text-slate-400">Soon</span> : null}</button>; }
+function persistPreferences(preferences: EmployeePreferences) { if (typeof window !== "undefined") window.localStorage.setItem(employeePrefsKey, JSON.stringify(preferences)); return preferences; }
+function readEmployeePreferences() { if (typeof window === "undefined") return defaultEmployeePreferences; try { return { ...defaultEmployeePreferences, ...JSON.parse(window.localStorage.getItem(employeePrefsKey) || "{}") } as EmployeePreferences; } catch { return defaultEmployeePreferences; } }
+function persistNotifications(notifications: UiNotification[]) { if (typeof window !== "undefined") window.localStorage.setItem(employeeNotificationsKey, JSON.stringify(notifications)); return notifications; }
+function readStoredNotifications(): UiNotification[] { if (typeof window === "undefined") return []; try { const value: unknown = JSON.parse(window.localStorage.getItem(employeeNotificationsKey) || "[]"); return Array.isArray(value) ? (value.slice(0, 12) as UiNotification[]) : []; } catch { return []; } }
+function relativeTime(timestamp: number) { const seconds = Math.max(1, Math.round((Date.now() - timestamp) / 1000)); if (seconds < 60) return "Just now"; const minutes = Math.round(seconds / 60); if (minutes < 60) return `${minutes}m ago`; const hours = Math.round(minutes / 60); return `${hours}h ago`; }
 function ComposeWindow({ compose, mailbox, onChange, onClose, onSaveDraft, onSubmit, savingDraft, sending }: { compose: ComposeState; mailbox: string; onChange: React.Dispatch<React.SetStateAction<ComposeState>>; onClose: () => void; onSaveDraft: () => void; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; savingDraft: boolean; sending: boolean }) {
   const [showCc, setShowCc] = React.useState(Boolean(compose.cc));
   const [showBcc, setShowBcc] = React.useState(Boolean(compose.bcc));
@@ -440,7 +576,7 @@ function senderInitial(value: string) { return (displayAddressName(value)[0] || 
 
 function LogoMark() { return <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl border border-blue-100 bg-white/76 text-blue-600 shadow-sm"><Mail className="h-5 w-5" aria-hidden="true" /></span>; }
 function Avatar({ name }: { name: string }) { const initial = (name.trim()[0] || "M").toUpperCase(); return <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/70 bg-gradient-to-br from-blue-100 to-slate-200 text-[13px] font-semibold text-blue-950 shadow-sm">{initial}</span>; }
-function TopIconButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/70 bg-white/50 text-blue-950 shadow-[0_14px_40px_rgba(30,64,175,0.12)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:bg-white/72" type="button">{children}</button>; }
+function TopIconButton({ ariaControls, badge, children, expanded, label, onClick }: { ariaControls?: string; badge?: number; children: React.ReactNode; expanded?: boolean; label: string; onClick?: () => void }) { return <button aria-controls={ariaControls} aria-expanded={expanded} aria-label={label} className="relative inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/70 bg-white/50 text-blue-950 shadow-[0_14px_40px_rgba(30,64,175,0.12)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:bg-white/72 focus:outline-none focus:ring-2 focus:ring-blue-200" onClick={onClick} type="button">{children}{badge ? <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-blue-500 px-1 text-[10px] font-semibold leading-4 text-white">{Math.min(badge, 9)}</span> : null}</button>; }
 function FolderButton({ active, compact = false, item, onClick }: { active: boolean; compact?: boolean; item: FolderNavItem; onClick: () => void }) {
   const Icon = item.icon;
   return <button className={`${compact ? "h-10" : "h-12"} flex items-center gap-3 rounded-2xl px-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-200 ${active ? "bg-blue-100/80 text-blue-700 shadow-sm" : "text-blue-950 hover:bg-white/60"}`} onClick={onClick} type="button"><Icon className={`h-5 w-5 ${active ? "text-blue-600" : "text-blue-800"}`} aria-hidden="true" /><span className="min-w-0 flex-1 truncate text-left">{item.label}</span>{item.folder?.unread ? <span className="rounded-full bg-white/82 px-2 py-0.5 text-xs text-blue-700 shadow-sm">{item.folder.unread}</span> : null}</button>;
