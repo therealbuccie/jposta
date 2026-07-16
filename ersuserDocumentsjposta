@@ -1,0 +1,65 @@
+[33mcommit 90addfdaf4037d593941e6ffeed59a0f0b0de38b[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfix/production-folder-selection[m[33m, [m[1;31morigin/fix/production-folder-selection[m[33m)[m
+Author: Buccie <stacomzy>
+Date:   Mon Jul 13 19:31:55 2026 +0100
+
+    Fix production webmail folder selection
+
+[1mdiff --git a/apps/web/app/employee/employee-workspace-client.tsx b/apps/web/app/employee/employee-workspace-client.tsx[m
+[1mindex f27892c..496508a 100644[m
+[1m--- a/apps/web/app/employee/employee-workspace-client.tsx[m
+[1m+++ b/apps/web/app/employee/employee-workspace-client.tsx[m
+[36m@@ -43,6 +43,7 @@[m [mexport function EmployeeWorkspaceClient() {[m
+   const [compose, setCompose] = React.useState<ComposeState>(blankCompose);[m
+   const [sending, setSending] = React.useState(false);[m
+   const [savingDraft, setSavingDraft] = React.useState(false);[m
+[32m+[m[32m  const bootstrapped = React.useRef(false);[m
+ [m
+   const mailbox = identity?.mailbox.address ?? "";[m
+   const displayName = friendlyName(identity?.mailbox.displayName, mailbox);[m
+[36m@@ -62,16 +63,21 @@[m [mexport function EmployeeWorkspaceClient() {[m
+   const loadMessages = React.useCallback(async (activeToken: string, nextFolder: string, nextPage = 1, nextSearch = search, keep = false) => {[m
+     setMessagesLoading(true);[m
+     setError(null);[m
+[32m+[m[32m    setActiveFolder(nextFolder);[m
+[32m+[m[32m    if (!keep) {[m
+[32m+[m[32m      setSelected(null);[m
+[32m+[m[32m      setSelectedUid(null);[m
+[32m+[m[32m      setMobileDetail(false);[m
+[32m+[m[32m      setPage({ ...blankPage, folder: nextFolder, page: nextPage });[m
+[32m+[m[32m    }[m
+     try {[m
+       const params = new URLSearchParams({ folder: nextFolder, page: String(nextPage), pageSize: String(pageSize) });[m
+       if (nextSearch.trim()) params.set("search", nextSearch.trim());[m
+       const result = await jpostaApi.webmailMessages(activeToken, `?${params.toString()}`);[m
+[31m-      setPage(result);[m
+[31m-      setActiveFolder(result.folder);[m
+[31m-      if (!keep) { setSelected(null); setSelectedUid(null); setMobileDetail(false); }[m
+[32m+[m[32m      setPage({ ...result, folder: nextFolder });[m
+     } catch (caught) {[m
+       if (isExpired(caught)) expire();[m
+[31m-      else setError("We couldn't connect to your mailbox. Please try again.");[m
+[32m+[m[32m      else setError(caught instanceof Error ? caught.message : "We couldn't connect to your mailbox. Please try again.");[m
+     } finally {[m
+       setMessagesLoading(false);[m
+     }[m
+[36m@@ -87,11 +93,13 @@[m [mexport function EmployeeWorkspaceClient() {[m
+       await loadMessages(activeToken, resolveFolder(folderResult.folders, folderPath), page.page, search, keep);[m
+     } catch (caught) {[m
+       if (isExpired(caught)) expire();[m
+[31m-      else setError("We couldn't connect to your mailbox. Please try again.");[m
+[32m+[m[32m      else setError(caught instanceof Error ? caught.message : "We couldn't connect to your mailbox. Please try again.");[m
+     }[m
+   }, [activeFolder, expire, loadMessages, page.page, search, token]);[m
+ [m
+   React.useEffect(() => {[m
+[32m+[m[32m    if (bootstrapped.current) return;[m
+[32m+[m[32m    bootstrapped.current = true;[m
+     const stored = getStoredWebmailSession();[m
+     if (!stored) { setLoading(false); setError("Loading your mailbox failed. Please sign in from your company portal."); return; }[m
+     setToken(stored.token);[m
+[36m@@ -436,5 +444,3 @@[m [mfunction LoadingList() { return <div className="grid gap-2" aria-label="Loading[m
+ function StateNotice({ message, tone = "info" }: { message: string; tone?: Notice["tone"] }) { return <GlassCard className={`p-4 text-sm ${tone === "error" ? "text-rose-700" : "text-muted-foreground"}`} intensity="soft">{message}</GlassCard>; }[m
+ function ToastNotice({ notice }: { notice: Notice }) { return <div className={`fixed right-4 top-4 z-[60] rounded-2xl border bg-white/95 px-4 py-3 text-sm shadow-glass ${notice.tone === "error" ? "border-rose-200 text-rose-800" : "border-sky-200 text-sky-800"}`}>{notice.message}</div>; }[m
+ [m
+[31m-[m
+[31m-[m

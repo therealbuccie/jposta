@@ -138,12 +138,39 @@ describe("WebmailImapService node-imap adapter", () => {
     await service.deleteDraft(session(), 3);
 
     assert.deepEqual(created, { uid: 0 });
-    assert.ok(first.operations.includes("append:Drafts"));
+    assert.ok(first.operations.some((operation) => operation.startsWith("append:Drafts")));
     assert.ok(second.operations.includes("addFlags:3:\\Deleted"));
-    assert.ok(second.operations.includes("append:Drafts"));
+    assert.ok(second.operations.some((operation) => operation.startsWith("append:Drafts")));
     assert.ok(third.operations.includes("addFlags:3:\\Deleted"));
   });
 
+  it("appends sent messages to the real special-use Sent folder with Seen flag", async () => {
+    const client = new FakeNodeImapClient();
+    const service = createService([client]);
+
+    const result = await service.appendSentMessage(session(), rawWithAttachment);
+
+    assert.deepEqual(result, { appended: true, folder: "Sent" });
+    assert.ok(client.operations.includes("getBoxes"));
+    assert.ok(client.operations.includes("append:Sent:\\Seen"));
+    assert.equal(client.appendedMessages.length, 1);
+    assert.equal(client.appendedMessages[0]!.message.toString(), rawWithAttachment);
+  });
+
+  it("falls back to literal Sent when no special-use Sent folder is listed", async () => {
+    const client = new FakeNodeImapClient({
+      boxes: {
+        INBOX: { attribs: ["\\Inbox"], delimiter: "/", children: null },
+        Sent: { attribs: [], delimiter: "/", children: null },
+      },
+    });
+    const service = createService([client]);
+
+    const result = await service.appendSentMessage(session(), rawMessage);
+
+    assert.deepEqual(result, { appended: true, folder: "Sent" });
+    assert.ok(client.operations.includes("append:Sent:\\Seen"));
+  });
   it("returns attachment content", async () => {
     const client = new FakeNodeImapClient();
     const service = createService([client]);
@@ -254,10 +281,12 @@ type FakeMessage = {
 class FakeNodeImapClient extends EventEmitter {
   operations: string[] = [];
   ended = false;
+  appendedMessages: Array<{ flags: string[]; mailbox: string | undefined; message: string | Buffer }> = [];
   private readonly messages: FakeMessage[];
 
   constructor(
     private readonly options: {
+      boxes?: unknown;
       closeDuringFetch?: boolean;
       connectError?: Error;
       messages?: FakeMessage[];
@@ -294,12 +323,15 @@ class FakeNodeImapClient extends EventEmitter {
   getBoxes(callback: (error: Error | null, boxes: unknown) => void) {
     this.operations.push("getBoxes");
     setImmediate(() =>
-      callback(null, {
-        INBOX: { attribs: ["\\Inbox"], delimiter: "/", children: null },
-        Sent: { attribs: ["\\Sent"], delimiter: "/", children: null },
-        Drafts: { attribs: ["\\Drafts"], delimiter: "/", children: null },
-        Trash: { attribs: ["\\Trash"], delimiter: "/", children: null },
-      }),
+      callback(
+        null,
+        this.options.boxes ?? {
+          INBOX: { attribs: ["\\Inbox"], delimiter: "/", children: null },
+          Sent: { attribs: ["\\Sent"], delimiter: "/", children: null },
+          Drafts: { attribs: ["\\Drafts"], delimiter: "/", children: null },
+          Trash: { attribs: ["\\Trash"], delimiter: "/", children: null },
+        },
+      ),
     );
   }
 
@@ -374,8 +406,9 @@ class FakeNodeImapClient extends EventEmitter {
     setImmediate(() => callback(null));
   }
 
-  append(_message: string, options: { mailbox?: string }, callback: (error: Error | null) => void) {
-    this.operations.push(`append:${options.mailbox}`);
+  append(message: string | Buffer, options: { flags?: string[]; mailbox?: string }, callback: (error: Error | null) => void) {
+    this.appendedMessages.push({ flags: options.flags || [], mailbox: options.mailbox, message });
+    this.operations.push(`append:${options.mailbox}:${(options.flags || []).join(",")}`);
     setImmediate(() => callback(null));
   }
 
