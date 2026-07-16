@@ -77,6 +77,11 @@ export function EmployeeWorkspaceClient() {
   const expire = React.useCallback(() => { clearWebmailSession(); window.location.assign(window.location.origin); }, []);
   const signOut = React.useCallback(() => { clearWebmailSession(); window.location.assign(window.location.origin); }, []);
   const openPanel = React.useCallback((panel: Exclude<TopbarPanel, null>) => { setTopbarPanel((current) => current === panel ? null : panel); if (panel === "command") { setCommandQuery(""); setCommandIndex(0); } }, []);
+  const openCommandPalette = React.useCallback(() => openPanel("command"), [openPanel]);
+  const openThemeMenu = React.useCallback(() => openPanel("theme"), [openPanel]);
+  const openNotificationsPanel = React.useCallback(() => openPanel("notifications"), [openPanel]);
+  const openSettingsDrawer = React.useCallback(() => openPanel("settings"), [openPanel]);
+  const openProfileMenu = React.useCallback(() => openPanel("profile"), [openPanel]);
 
   const loadMessages = React.useCallback(async (activeToken: string, nextFolder: string, nextPage = 1, nextSearch = search, keep = false) => {
     setMessagesLoading(true); setError(null);
@@ -121,14 +126,14 @@ export function EmployeeWorkspaceClient() {
       const typing = Boolean(target?.closest("input, textarea, [contenteditable='true']"));
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !typing) {
         event.preventDefault();
-        openPanel("command");
+        openCommandPalette();
         return;
       }
       if (event.key === "Escape") setTopbarPanel(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openPanel]);
+  }, [openCommandPalette]);
   React.useEffect(() => {
     const stored = getStoredWebmailSession();
     if (!stored) { setLoading(false); setError("Loading your mailbox failed. Please sign in from your company portal."); return; }
@@ -167,9 +172,11 @@ export function EmployeeWorkspaceClient() {
     { action: () => { setTopbarPanel(null); window.setTimeout(() => document.querySelector<HTMLInputElement>("input[aria-label='Search emails, contacts, files']")?.focus(), 0); }, label: "Search mail" },
     { action: () => { void setRead(); setTopbarPanel(null); }, disabled: !selected, label: selected?.unread ? "Mark selected message read" : "Mark selected message unread" },
     { action: () => { void toggleStar(); setTopbarPanel(null); }, disabled: !selected, label: selected?.starred ? "Unstar selected message" : "Star selected message" },
-    { action: () => openPanel("settings"), label: "Open Settings" },
+    { action: openSettingsDrawer, label: "Open Settings" },
     { action: signOut, label: "Sign out" },
-  ];  async function openFolder(path: string) { setSidebarOpen(false); if (token) await loadMessages(token, path, 1, search, false); }
+  ];
+
+  async function openFolder(path: string) { setSidebarOpen(false); if (token) await loadMessages(token, path, 1, search, false); }
   async function openMessage(message: WebmailMessage) {
     if (!token) return;
     setSelectedUid(message.uid); setDetailLoading(true); setError(null);
@@ -279,15 +286,15 @@ export function EmployeeWorkspaceClient() {
       <div className="pointer-events-none fixed left-[12%] top-[14%] h-72 w-72 rounded-full bg-sky-200/45 blur-3xl" />
       <div className="pointer-events-none fixed bottom-[8%] right-[18%] h-80 w-80 rounded-full bg-blue-100/70 blur-3xl" />
       <div className="relative z-10 flex h-dvh min-h-0 flex-col gap-2 overflow-hidden p-2 lg:p-2.5">
-        <header className="grid gap-2 lg:grid-cols-[15rem_minmax(0,40rem)_auto] xl:grid-cols-[15.5rem_minmax(32rem,40rem)_auto]">
+        <header className="relative z-30 grid gap-2 lg:grid-cols-[15rem_minmax(0,40rem)_auto] xl:grid-cols-[15.5rem_minmax(32rem,40rem)_auto]">
           <div className="hidden items-center gap-2 rounded-[1rem] border border-white/70 bg-white/42 px-3 py-2 shadow-[0_18px_60px_rgba(37,99,235,0.12)] backdrop-blur-2xl lg:flex"><LogoMark /><div className="min-w-0"><p className="truncate text-sm text-slate-500">Mailbox</p><p className="truncate text-base font-semibold text-blue-950">{workspace}</p></div></div>
           <div className="flex items-center gap-3 rounded-[1.05rem] border border-white/70 bg-white/58 p-1.5 shadow-[0_20px_70px_rgba(30,64,175,0.14)] backdrop-blur-2xl">
             <button aria-label="Open folders" className="inline-flex h-8 w-8 items-center justify-center rounded-2xl border border-white/70 bg-white/70 text-blue-900 shadow-sm lg:hidden" onClick={() => setSidebarOpen(true)} type="button"><Menu className="h-5 w-5" aria-hidden="true" /></button>
             <Search className="ml-1 h-5 w-5 shrink-0 text-blue-900" aria-hidden="true" />
             <input aria-label="Search emails, contacts, files" className="h-8 min-w-0 flex-1 bg-transparent text-sm text-blue-950 outline-none placeholder:text-slate-500" onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && token) void loadMessages(token, activeFolder, 1, search, false); }} placeholder="Search emails, contacts, files..." value={search} />
-            <button aria-controls="employee-command-palette" aria-expanded={topbarPanel === "command"} aria-label="Open command palette" className="hidden rounded-full border border-blue-100 bg-white/80 px-2.5 py-1 text-[11px] font-medium text-blue-900 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 sm:inline-flex" onClick={() => openPanel("command")} type="button"><Command className="mr-1 h-3 w-3" aria-hidden="true" />Ctrl K</button>
+            <button aria-controls="employee-command-palette" aria-expanded={topbarPanel === "command"} aria-label="Open command palette" className="pointer-events-auto hidden cursor-pointer rounded-full border border-blue-100 bg-white/80 px-2.5 py-1 text-[11px] font-medium text-blue-900 transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 sm:inline-flex" onClick={openCommandPalette} type="button"><Command className="mr-1 h-3 w-3" aria-hidden="true" />Ctrl K</button>
           </div>
-          <div className="flex items-center justify-end gap-2"><TopIconButton ariaControls="employee-theme-menu" expanded={topbarPanel === "theme"} label="Theme" onClick={() => openPanel("theme")}><Moon className="h-5 w-5" aria-hidden="true" /></TopIconButton><TopIconButton ariaControls="employee-notifications" badge={unreadNotifications} expanded={topbarPanel === "notifications"} label="Notifications" onClick={() => openPanel("notifications")}><Bell className="h-5 w-5" aria-hidden="true" /></TopIconButton><TopIconButton ariaControls="employee-settings" expanded={topbarPanel === "settings"} label="Settings" onClick={() => openPanel("settings")}><Settings className="h-5 w-5" aria-hidden="true" /></TopIconButton><button aria-controls="employee-profile-menu" aria-expanded={topbarPanel === "profile"} aria-label="Open profile menu" className="flex min-w-0 items-center gap-2 rounded-[1.1rem] border border-white/70 bg-white/50 px-2.5 py-1.5 shadow-[0_18px_60px_rgba(30,64,175,0.12)] backdrop-blur-2xl transition hover:bg-white/70 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:min-w-[11rem] lg:min-w-[13.5rem]" onClick={() => openPanel("profile")} type="button"><Avatar name={displayName} /><div className="hidden min-w-0 flex-1 text-left sm:block"><p className="truncate text-[13px] font-semibold text-blue-950">{displayName}</p><p className="truncate text-xs text-slate-500">{mailbox || "Mailbox"}</p></div><ChevronDown className="h-4 w-4 shrink-0 text-blue-900" aria-hidden="true" /></button></div>
+          <div className="flex items-center justify-end gap-2"><TopIconButton ariaControls="employee-theme-menu" expanded={topbarPanel === "theme"} label="Theme" onClick={openThemeMenu}><Moon className="h-5 w-5" aria-hidden="true" /></TopIconButton><TopIconButton ariaControls="employee-notifications" badge={unreadNotifications} expanded={topbarPanel === "notifications"} label="Notifications" onClick={openNotificationsPanel}><Bell className="h-5 w-5" aria-hidden="true" /></TopIconButton><TopIconButton ariaControls="employee-settings" expanded={topbarPanel === "settings"} label="Settings" onClick={openSettingsDrawer}><Settings className="h-5 w-5" aria-hidden="true" /></TopIconButton><button aria-controls="employee-profile-menu" aria-expanded={topbarPanel === "profile"} aria-label="Open profile menu" className="pointer-events-auto flex min-w-0 cursor-pointer items-center gap-2 rounded-[1.1rem] border border-white/70 bg-white/50 px-2.5 py-1.5 shadow-[0_18px_60px_rgba(30,64,175,0.12)] backdrop-blur-2xl transition hover:bg-white/70 focus:outline-none focus:ring-2 focus:ring-blue-200 sm:min-w-[11rem] lg:min-w-[13.5rem]" onClick={openProfileMenu} type="button"><Avatar name={displayName} /><div className="hidden min-w-0 flex-1 text-left sm:block"><p className="truncate text-[13px] font-semibold text-blue-950">{displayName}</p><p className="truncate text-xs text-slate-500">{mailbox || "Mailbox"}</p></div><ChevronDown className="h-4 w-4 shrink-0 text-blue-900" aria-hidden="true" /></button></div>
         </header>
         <main className="grid min-h-0 flex-1 gap-2 overflow-hidden lg:grid-cols-[15rem_minmax(24rem,28rem)_minmax(0,1fr)] xl:grid-cols-[15.5rem_minmax(25rem,29rem)_minmax(0,1fr)]">
           <aside className={`${sidebarOpen ? "fixed inset-3 z-50 flex" : "hidden"} min-h-0 min-w-0 flex-col rounded-[1.15rem] border border-white/70 bg-white/56 shadow-[0_30px_90px_rgba(30,64,175,0.18)] backdrop-blur-2xl lg:relative lg:inset-auto lg:z-auto lg:flex`}>
@@ -342,7 +349,8 @@ export function EmployeeWorkspaceClient() {
         storageText="Mailbox storage available"
         unreadCount={unreadCount}
         workspace={workspace}
-      />      {compose.open ? (
+      />
+      {compose.open ? (
         <ComposeWindow
           compose={compose}
           mailbox={mailbox}
@@ -576,7 +584,7 @@ function senderInitial(value: string) { return (displayAddressName(value)[0] || 
 
 function LogoMark() { return <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl border border-blue-100 bg-white/76 text-blue-600 shadow-sm"><Mail className="h-5 w-5" aria-hidden="true" /></span>; }
 function Avatar({ name }: { name: string }) { const initial = (name.trim()[0] || "M").toUpperCase(); return <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/70 bg-gradient-to-br from-blue-100 to-slate-200 text-[13px] font-semibold text-blue-950 shadow-sm">{initial}</span>; }
-function TopIconButton({ ariaControls, badge, children, expanded, label, onClick }: { ariaControls?: string; badge?: number; children: React.ReactNode; expanded?: boolean; label: string; onClick?: () => void }) { return <button aria-controls={ariaControls} aria-expanded={expanded} aria-label={label} className="relative inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/70 bg-white/50 text-blue-950 shadow-[0_14px_40px_rgba(30,64,175,0.12)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:bg-white/72 focus:outline-none focus:ring-2 focus:ring-blue-200" onClick={onClick} type="button">{children}{badge ? <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-blue-500 px-1 text-[10px] font-semibold leading-4 text-white">{Math.min(badge, 9)}</span> : null}</button>; }
+function TopIconButton({ ariaControls, badge, children, expanded, label, onClick }: { ariaControls?: string; badge?: number; children: React.ReactNode; expanded?: boolean; label: string; onClick?: () => void }) { return <button aria-controls={ariaControls} aria-expanded={expanded} aria-label={label} className="pointer-events-auto relative inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-white/70 bg-white/50 text-blue-950 shadow-[0_14px_40px_rgba(30,64,175,0.12)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:bg-white/72 focus:outline-none focus:ring-2 focus:ring-blue-200" onClick={onClick} type="button">{children}{badge ? <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-blue-500 px-1 text-[10px] font-semibold leading-4 text-white">{Math.min(badge, 9)}</span> : null}</button>; }
 function FolderButton({ active, compact = false, item, onClick }: { active: boolean; compact?: boolean; item: FolderNavItem; onClick: () => void }) {
   const Icon = item.icon;
   return <button className={`${compact ? "h-10" : "h-12"} flex items-center gap-3 rounded-2xl px-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-200 ${active ? "bg-blue-100/80 text-blue-700 shadow-sm" : "text-blue-950 hover:bg-white/60"}`} onClick={onClick} type="button"><Icon className={`h-5 w-5 ${active ? "text-blue-600" : "text-blue-800"}`} aria-hidden="true" /><span className="min-w-0 flex-1 truncate text-left">{item.label}</span>{item.folder?.unread ? <span className="rounded-full bg-white/82 px-2 py-0.5 text-xs text-blue-700 shadow-sm">{item.folder.unread}</span> : null}</button>;
