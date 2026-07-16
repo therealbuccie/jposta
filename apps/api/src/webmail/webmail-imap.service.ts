@@ -283,6 +283,20 @@ export class WebmailImapService {
     );
   }
 
+
+  async appendSentMessage(session: WebmailSession, rawMessage: string | Buffer) {
+    return this.withConnection(session.mailbox.address, session.credential, async (client) => {
+      const sentFolder = await this.resolveSentFolderPath(client);
+      await withTimeout(
+        callback<void>((done) =>
+          client.append(rawMessage, { mailbox: sentFolder, flags: ["\\Seen"] }, done),
+        ),
+        defaultOperationTimeoutMs,
+        `APPEND ${sentFolder}`,
+      );
+      return { appended: true, folder: sentFolder };
+    });
+  }
   async getAttachment(session: WebmailSession, uid: number, partId: string, folderValue?: string) {
     const folder = normalizeFolderPath(folderValue);
     return this.withConnection(
@@ -367,6 +381,19 @@ export class WebmailImapService {
     );
   }
 
+
+  private async resolveSentFolderPath(client: ImapClient) {
+    const boxes = await withTimeout(getBoxes(client), defaultOperationTimeoutMs, "LIST");
+    const folders = flattenBoxes(boxes);
+    const specialFolder = folders.find((folder) => normalizeSpecialUse(folder.specialUse) === "\\sent");
+    if (specialFolder) return specialFolder.path;
+    const namedFolder = folders.find((folder) => {
+      const name = folder.name.toLowerCase();
+      const path = folder.path.toLowerCase();
+      return name === "sent" || path === "sent" || path.endsWith("/sent") || path.endsWith(".sent");
+    });
+    return namedFolder?.path || "Sent";
+  }
   private async withConnection<T>(
     mailbox: string,
     password: string,
@@ -627,6 +654,10 @@ function flattenBoxes(boxes: ImapBoxes, parentPath = "") {
     if (box.children) result.push(...flattenBoxes(box.children, path));
   }
   return result;
+}
+
+function normalizeSpecialUse(value?: string) {
+  return value?.toLowerCase();
 }
 
 function specialUseFromAttributes(name: string, attributes: string[]) {

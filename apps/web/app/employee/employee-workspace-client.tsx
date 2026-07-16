@@ -84,12 +84,12 @@ export function EmployeeWorkspaceClient() {
   const openProfileMenu = React.useCallback(() => openPanel("profile"), [openPanel]);
 
   const loadMessages = React.useCallback(async (activeToken: string, nextFolder: string, nextPage = 1, nextSearch = search, keep = false) => {
-    setMessagesLoading(true); setError(null);
+    setMessagesLoading(true); setError(null); setActiveFolder(nextFolder);
     try {
       const params = new URLSearchParams({ folder: nextFolder, page: String(nextPage), pageSize: String(pageSize) });
       if (nextSearch.trim()) params.set("search", nextSearch.trim());
       const result = await jpostaApi.webmailMessages(activeToken, `?${params.toString()}`);
-      setPage(result); setActiveFolder(result.folder);
+      setPage(result); setActiveFolder(result.folder || nextFolder);
       if (!keep) { setSelected(null); setSelectedUid(null); setMobileDetail(false); }
     } catch (caught) { if (isExpired(caught)) expire(); else setError(errorMessage(caught, "We couldn't connect to this folder. Please try again.")); }
     finally { setMessagesLoading(false); }
@@ -239,7 +239,9 @@ export function EmployeeWorkspaceClient() {
       if (compose.inReplyTo) data.set("inReplyTo", compose.inReplyTo);
       if (compose.references) data.set("references", compose.references);
       compose.attachments.forEach((file) => data.append("attachments", file));
+      const draftUid = compose.draftUid;
       await jpostaApi.webmailSendForm(token, data);
+      if (draftUid) await jpostaApi.webmailDeleteDraft(token, draftUid).catch(() => null);
       setCompose(blankCompose); showNotice("Message sent", "success");
       const sent = findFolder(folders, "Sent")?.path;
       if (sent && activeFolder === sent) await loadMessages(token, sent, 1, search, false);
@@ -554,11 +556,21 @@ function makeCustomFolders(folders: WebmailFolder[], primary: FolderNavItem[]): 
 }
 function findFolder(folders: WebmailFolder[], label: string) {
   const config = primaryFolderConfig.find((item) => item.label === label) || { aliases: [label.toLowerCase()] };
+  const specialUse = specialUseForLabel(label);
+  if (specialUse) {
+    const specialFolder = folders.find((folder) => normalizeSpecialUse(folder.specialUse) === specialUse);
+    if (specialFolder) return specialFolder;
+  }
   return folders.find((folder) => {
     const value = `${folder.specialUse || ""} ${folder.name} ${folder.path}`.toLowerCase();
     return config.aliases.some((alias) => value.includes(alias));
   });
 }
+function specialUseForLabel(label: string) {
+  const values: Record<string, string> = { Drafts: "\\drafts", Inbox: "\\inbox", Junk: "\\junk", Sent: "\\sent", Trash: "\\trash" };
+  return values[label];
+}
+function normalizeSpecialUse(value?: string) { return value?.toLowerCase(); }
 function resolveFolder(folders: WebmailFolder[], current: string) { return folders.some((folder) => folder.path === current) ? current : findFolder(folders, "Inbox")?.path || folders[0]?.path || "INBOX"; }
 function friendlyName(name: string | undefined, address: string) { const clean = name?.trim(); if (clean) return clean; const local = address.split("@")[0] || "Mailbox"; return local.split(/[._-]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "); }
 function isInbox(folder: string) { return folder.toLowerCase() === "inbox"; }
