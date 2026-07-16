@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import { Archive, ArrowLeft, Bell, ChevronDown, ChevronRight, Cloud, Download, Forward, Folder, Inbox, Mail, MailPlus, Menu, Moon, MoreHorizontal, Paperclip, RefreshCw, Reply, ReplyAll, Save, Search, Send, Settings, ShieldAlert, Star, Trash2, X } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Archive, ArrowLeft, Bell, Bold, Calendar, ChevronDown, ChevronRight, Cloud, Code, Download, Forward, Folder, Image, Inbox, Italic, Link, List, Mail, MailPlus, Maximize2, Menu, Mic, Minimize2, Moon, MoreHorizontal, Paperclip, Quote, Redo2, RefreshCw, Reply, ReplyAll, Save, Search, Send, Settings, ShieldAlert, Smile, Sparkles, Star, Trash2, Underline, Undo2, Users, X } from "lucide-react";
 import { GlassButton, GlassInput } from "@jposta/ui";
 import { jpostaApi, type WebmailFolder, type WebmailMe, type WebmailMessage, type WebmailMessageDetail } from "@/lib/api-client";
 import { clearWebmailSession, getStoredWebmailSession } from "@/lib/webmail-session";
@@ -203,7 +203,6 @@ export function EmployeeWorkspaceClient() {
 
   return (
     <div className="h-dvh min-h-0 overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(147,197,253,0.45),transparent_30%),radial-gradient(circle_at_80%_10%,rgba(221,214,254,0.45),transparent_34%),linear-gradient(135deg,#edf7ff_0%,#f8fbff_45%,#eaf3ff_100%)] text-slate-950">
-'
       <style>{`
         .jposta-email-preview { max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; }
 
@@ -211,7 +210,7 @@ export function EmployeeWorkspaceClient() {
         .jposta-email-preview :where(table) { max-width: 100%; }
 
       `}</style>
-'      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.42)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.34)_1px,transparent_1px)] bg-[size:44px_44px] opacity-50" />
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.42)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.34)_1px,transparent_1px)] bg-[size:44px_44px] opacity-50" />
       <div className="pointer-events-none fixed left-[12%] top-[14%] h-72 w-72 rounded-full bg-sky-200/45 blur-3xl" />
       <div className="pointer-events-none fixed bottom-[8%] right-[18%] h-80 w-80 rounded-full bg-blue-100/70 blur-3xl" />
       <div className="relative z-10 flex h-dvh min-h-0 flex-col gap-2 overflow-hidden p-2 lg:p-2.5">
@@ -255,11 +254,147 @@ export function EmployeeWorkspaceClient() {
           </section>
         </main>
       </div>
-      {compose.open ? <div className="fixed inset-0 z-50 flex items-end justify-end bg-transparent p-0 sm:p-4 lg:pointer-events-none"><form className="pointer-events-auto flex h-dvh w-full flex-col overflow-hidden border border-white/70 bg-white/95 shadow-[0_30px_90px_rgba(30,64,175,0.24)] sm:h-[min(42rem,calc(100dvh-2rem))] sm:max-w-[44rem] sm:rounded-[1.5rem]" onSubmit={sendMessage}><div className="flex items-center justify-between border-b border-blue-100 px-4 py-3"><div><h2 className="text-[13px] font-semibold text-blue-950">{composeTitle(compose.mode)}</h2><p className="text-xs text-slate-500">From {mailbox}</p></div><GlassButton aria-label="Close composer" onClick={() => void closeComposer()} size="icon" type="button" variant="glass"><X className="h-4 w-4" aria-hidden="true" /></GlassButton></div><div className="grid gap-2 border-b border-blue-100 p-4"><label className="text-xs font-medium text-slate-500" htmlFor="compose-to">To</label><GlassInput id="compose-to" onChange={(event) => setCompose((current) => ({ ...current, to: event.target.value }))} required value={compose.to} /><label className="text-xs font-medium text-slate-500" htmlFor="compose-cc">Cc</label><GlassInput id="compose-cc" onChange={(event) => setCompose((current) => ({ ...current, cc: event.target.value }))} value={compose.cc} /><label className="text-xs font-medium text-slate-500" htmlFor="compose-bcc">Bcc</label><GlassInput id="compose-bcc" onChange={(event) => setCompose((current) => ({ ...current, bcc: event.target.value }))} value={compose.bcc} /><label className="text-xs font-medium text-slate-500" htmlFor="compose-subject">Subject</label><GlassInput id="compose-subject" onChange={(event) => setCompose((current) => ({ ...current, subject: event.target.value }))} value={compose.subject} /></div><label className="sr-only" htmlFor="compose-body">Message body</label><textarea className="min-h-0 flex-1 resize-none bg-white/95 p-3 text-sm leading-6 text-blue-950 outline-none focus:ring-2 focus:ring-inset focus:ring-blue-200" id="compose-body" onChange={(event) => setCompose((current) => ({ ...current, body: event.target.value }))} placeholder="Write your message" value={compose.body} />{compose.attachments.length ? <div className="grid gap-2 border-t border-blue-100 p-3">{compose.attachments.map((file) => <div className="flex items-center justify-between rounded-xl bg-blue-50 px-3 py-2 text-xs" key={`${file.name}-${file.size}`}><span className="truncate">{file.name} / {formatBytes(file.size)}</span><button aria-label={`Remove ${file.name}`} className="text-blue-700" onClick={() => setCompose((current) => ({ ...current, attachments: current.attachments.filter((item) => item !== file) }))} type="button">Remove</button></div>)}</div> : null}<div className="flex flex-wrap items-center justify-between gap-2 border-t border-blue-100 p-3"><div className="flex flex-wrap gap-2"><GlassButton disabled={sending} type="submit" variant="primary"><Send className="h-4 w-4" aria-hidden="true" />{sending ? "Sending..." : "Send"}</GlassButton><GlassButton disabled={savingDraft} onClick={() => void saveDraft()} type="button" variant="glass"><Save className="h-4 w-4" aria-hidden="true" />{savingDraft ? "Saving..." : "Save draft"}</GlassButton><label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-blue-100 bg-white/80 px-3 py-2 text-sm font-medium text-blue-950 shadow-sm transition hover:bg-white"><Paperclip className="h-4 w-4" aria-hidden="true" />Attach<input aria-label="Attach files" className="sr-only" multiple onChange={(event) => { const files = Array.from(event.target.files || []); setCompose((current) => ({ ...current, attachments: [...current.attachments, ...files].slice(0, 10) })); event.target.value = ""; }} type="file" /></label></div><GlassButton onClick={() => void closeComposer()} type="button" variant="ghost">Discard</GlassButton></div></form></div> : null}
+      {compose.open ? (
+        <ComposeWindow
+          compose={compose}
+          mailbox={mailbox}
+          onChange={setCompose}
+          onClose={() => void closeComposer()}
+          onSaveDraft={() => void saveDraft()}
+          onSubmit={sendMessage}
+          savingDraft={savingDraft}
+          sending={sending}
+        />
+      ) : null}
       {notice ? <ToastNotice notice={notice} /> : null}
     </div>
   );
 }
+function ComposeWindow({ compose, mailbox, onChange, onClose, onSaveDraft, onSubmit, savingDraft, sending }: { compose: ComposeState; mailbox: string; onChange: React.Dispatch<React.SetStateAction<ComposeState>>; onClose: () => void; onSaveDraft: () => void; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; savingDraft: boolean; sending: boolean }) {
+  const [showCc, setShowCc] = React.useState(Boolean(compose.cc));
+  const [showBcc, setShowBcc] = React.useState(Boolean(compose.bcc));
+  const toRecipients = recipientChips(compose.to);
+  const ccRecipients = recipientChips(compose.cc);
+  const bccRecipients = recipientChips(compose.bcc);
+  const characterCount = compose.body.length;
+  const draftStatus = savingDraft ? "Saving..." : compose.draftUid ? "Saved just now" : hasComposeContent(compose) ? "Draft ready" : "Start writing";
+
+  function updateField(field: "to" | "cc" | "bcc" | "subject" | "body", value: string) {
+    onChange((current) => ({ ...current, [field]: value }));
+  }
+  function removeRecipient(field: "to" | "cc" | "bcc", value: string) {
+    onChange((current) => ({ ...current, [field]: recipientChips(current[field]).filter((recipient) => recipient !== value).join(", ") }));
+  }
+  function attachFiles(files: FileList | null) {
+    if (!files?.length) return;
+    onChange((current) => ({ ...current, attachments: [...current.attachments, ...Array.from(files)].slice(0, 10) }));
+  }
+  function removeAttachment(file: File) {
+    onChange((current) => ({ ...current, attachments: current.attachments.filter((item) => item !== file) }));
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-sky-100/38 p-2 backdrop-blur-2xl sm:p-5">
+      <div className="pointer-events-none absolute left-[12%] top-[8%] h-64 w-64 rounded-full bg-blue-300/35 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-[10%] right-[14%] h-72 w-72 rounded-full bg-indigo-200/45 blur-3xl" />
+      <form className="relative flex h-dvh w-full max-w-[76rem] flex-col overflow-hidden border border-white/75 bg-white/88 shadow-[0_34px_120px_rgba(30,64,175,0.28)] backdrop-blur-2xl sm:h-[85dvh] sm:rounded-[2rem]" onSubmit={onSubmit}>
+        <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-white/90" />
+        <header className="flex shrink-0 items-start justify-between gap-4 px-4 py-4 sm:px-7 sm:py-6">
+          <div className="flex min-w-0 items-start gap-4">
+            <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[1.15rem] border border-white/80 bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-[0_18px_38px_rgba(59,130,246,0.32)]"><MailPlus className="h-5 w-5" aria-hidden="true" /></span>
+            <div className="min-w-0">
+              <h2 className="truncate text-[1.35rem] font-semibold tracking-[-0.01em] text-blue-950 sm:text-[1.85rem]">{composeTitle(compose.mode)}</h2>
+              <p className="mt-1 truncate text-sm text-slate-600">From: <span className="font-medium text-blue-950">{mailbox || "Mailbox"}</span></p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <ComposeIconButton label="Minimize" onClick={onClose}><Minimize2 className="h-4 w-4" aria-hidden="true" /></ComposeIconButton>
+            <ComposeIconButton label="Pop out"><Maximize2 className="h-4 w-4" aria-hidden="true" /></ComposeIconButton>
+            <ComposeIconButton label="Close" onClick={onClose}><X className="h-4 w-4" aria-hidden="true" /></ComposeIconButton>
+          </div>
+        </header>
+        <div className="flex min-h-0 flex-1 gap-4 px-3 pb-3 sm:px-6 sm:pb-6">
+          <aside className="hidden w-12 shrink-0 flex-col items-center gap-3 rounded-[1.35rem] border border-white/70 bg-white/46 p-2 shadow-inner backdrop-blur-xl md:flex">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-lg"><Sparkles className="h-4 w-4" aria-hidden="true" /></span>
+            <ComposeRailButton label="Attach"><Paperclip className="h-4 w-4" aria-hidden="true" /></ComposeRailButton>
+            <ComposeRailButton label="Link"><Link className="h-4 w-4" aria-hidden="true" /></ComposeRailButton>
+            <ComposeRailButton label="Emoji"><Smile className="h-4 w-4" aria-hidden="true" /></ComposeRailButton>
+            <ComposeRailButton label="Text"><span className="text-sm font-semibold">T</span></ComposeRailButton>
+          </aside>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.45rem] border border-blue-100/80 bg-white/72 shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_22px_70px_rgba(37,99,235,0.14)] backdrop-blur-xl">
+            <div className="shrink-0 divide-y divide-blue-100/80">
+              <ComposeRecipientRow chips={toRecipients} id="compose-to" label="To" onRemove={(value) => removeRecipient("to", value)} onValueChange={(value) => updateField("to", value)} placeholder="Add recipients..." required value={compose.to}>
+                <button className="rounded-full px-2 py-1 text-sm font-medium text-blue-700 transition hover:bg-blue-50" onClick={() => setShowCc(true)} type="button">Cc</button>
+                <button className="rounded-full px-2 py-1 text-sm font-medium text-blue-700 transition hover:bg-blue-50" onClick={() => setShowBcc(true)} type="button">Bcc</button>
+              </ComposeRecipientRow>
+              {showCc || compose.cc ? <ComposeRecipientRow chips={ccRecipients} id="compose-cc" label="Cc" onRemove={(value) => removeRecipient("cc", value)} onValueChange={(value) => updateField("cc", value)} placeholder="Add Cc recipients..." value={compose.cc} /> : null}
+              {showBcc || compose.bcc ? <ComposeRecipientRow chips={bccRecipients} id="compose-bcc" label="Bcc" onRemove={(value) => removeRecipient("bcc", value)} onValueChange={(value) => updateField("bcc", value)} placeholder="Add Bcc recipients..." value={compose.bcc} /> : null}
+              <div className="flex items-center gap-3 px-4 py-3 sm:px-6">
+                <span className="inline-flex h-9 min-w-24 items-center gap-2 rounded-2xl border border-blue-100 bg-white/74 px-3 text-sm font-semibold text-blue-950 shadow-sm"><Mail className="h-4 w-4 text-blue-700" aria-hidden="true" />Subject</span>
+                <input aria-label="Subject" className="h-10 min-w-0 flex-1 bg-transparent text-[15px] text-blue-950 outline-none placeholder:text-slate-400" onChange={(event) => updateField("subject", event.target.value)} placeholder="Add subject..." value={compose.subject} />
+              </div>
+            </div>
+            <div className="shrink-0 px-4 pt-4 sm:px-6">
+              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                {["Improve", "Rewrite", "Professional", "Friendly", "Translate", "Summarize"].map((label) => <button className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-blue-100 bg-white/74 px-3 text-xs font-semibold text-blue-800 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white" key={label} type="button"><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{label}</button>)}
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto rounded-[1.25rem] border border-blue-100/80 bg-white/68 px-3 py-2 text-blue-950 shadow-sm transition duration-200 focus-within:bg-white/82">
+                <ComposeToolbarButton label="Undo"><Undo2 className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="Redo"><Redo2 className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <span className="mx-1 h-6 w-px shrink-0 bg-blue-100" />
+                <select aria-label="Font" className="h-9 rounded-xl border border-blue-100 bg-white/82 px-3 text-sm outline-none"><option>Inter</option><option>Serif</option><option>Mono</option></select>
+                <select aria-label="Font size" className="h-9 rounded-xl border border-blue-100 bg-white/82 px-2 text-sm outline-none"><option>14</option><option>15</option><option>16</option><option>18</option></select>
+                <span className="mx-1 h-6 w-px shrink-0 bg-blue-100" />
+                <ComposeToolbarButton label="Bold"><Bold className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="Italic"><Italic className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="Underline"><Underline className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="List"><List className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="Align left"><AlignLeft className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="Align center"><AlignCenter className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="Align right"><AlignRight className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="Quote"><Quote className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="Code"><Code className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+                <ComposeToolbarButton label="More"><MoreHorizontal className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
+              </div>
+            </div>
+            <label className="sr-only" htmlFor="compose-body">Message body</label>
+            <textarea className="min-h-0 flex-1 resize-none bg-transparent px-5 py-5 text-[15px] leading-7 text-blue-950 outline-none placeholder:text-slate-400 sm:px-7" id="compose-body" onChange={(event) => updateField("body", event.target.value)} placeholder="Write something amazing..." value={compose.body} />
+            {compose.attachments.length ? <div className="grid shrink-0 gap-2 border-t border-blue-100/70 px-4 py-3 sm:px-6">{compose.attachments.map((file) => <div className="flex items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-white/76 px-3 py-2 text-xs text-blue-950 shadow-sm" key={`${file.name}-${file.size}`}><span className="min-w-0 truncate"><Paperclip className="mr-2 inline h-3.5 w-3.5 text-blue-700" aria-hidden="true" />{file.name} / {formatBytes(file.size)}</span><button aria-label={`Remove ${file.name}`} className="rounded-full px-2 py-1 font-medium text-blue-700 transition hover:bg-blue-50" onClick={() => removeAttachment(file)} type="button">Remove</button></div>)}</div> : null}
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-blue-100/80 px-4 py-3 sm:px-6">
+              <div className="flex flex-wrap items-center gap-2 text-sm text-blue-950">
+                <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-full px-2.5 font-medium transition hover:bg-white/70"><Paperclip className="h-4 w-4 text-blue-700" aria-hidden="true" />Attach<input aria-label="Attach files" className="sr-only" multiple onChange={(event) => { attachFiles(event.target.files); event.target.value = ""; }} type="file" /></label>
+                <ComposeFooterButton label="Drive"><Cloud className="h-4 w-4" aria-hidden="true" />Drive</ComposeFooterButton>
+                <ComposeFooterButton label="Image"><Image className="h-4 w-4" aria-hidden="true" />Image</ComposeFooterButton>
+                <ComposeFooterButton label="Calendar"><Calendar className="h-4 w-4" aria-hidden="true" />Calendar</ComposeFooterButton>
+                <ComposeFooterButton label="Contacts"><Users className="h-4 w-4" aria-hidden="true" />Contacts</ComposeFooterButton>
+                <ComposeFooterButton label="Voice note"><Mic className="h-4 w-4" aria-hidden="true" />Voice</ComposeFooterButton>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-500"><span>{draftStatus}</span><span>{characterCount.toLocaleString()} chars</span></div>
+            </div>
+          </div>
+        </div>
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 pb-4 sm:px-7 sm:pb-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <button className="inline-flex h-12 items-center overflow-hidden rounded-2xl bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 text-sm font-semibold text-white shadow-[0_18px_42px_rgba(59,130,246,0.34)] transition duration-200 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70" disabled={sending} type="submit"><span className="inline-flex h-full items-center gap-2 px-5"><Send className="h-4 w-4" aria-hidden="true" />{sending ? "Sending..." : "Send"}</span><span className="flex h-full items-center border-l border-white/24 px-3"><ChevronDown className="h-4 w-4" aria-hidden="true" /></span></button>
+            <button className="inline-flex h-12 items-center gap-2 rounded-2xl border border-white/70 bg-white/70 px-4 text-sm font-medium text-blue-950 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white" onClick={onSaveDraft} type="button"><Save className="h-4 w-4 text-blue-700" aria-hidden="true" />Save now</button>
+            <button className="inline-flex h-12 items-center gap-2 rounded-2xl border border-white/70 bg-white/70 px-4 text-sm font-medium text-blue-950 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white" type="button"><Calendar className="h-4 w-4 text-blue-700" aria-hidden="true" />Schedule</button>
+          </div>
+          <button className="inline-flex h-12 items-center rounded-2xl border border-white/70 bg-white/62 px-5 text-sm font-medium text-blue-950 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white" onClick={onClose} type="button">Discard</button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function ComposeRecipientRow({ children, chips, id, label, onRemove, onValueChange, placeholder, required, value }: { children?: React.ReactNode; chips: string[]; id: string; label: string; onRemove: (value: string) => void; onValueChange: (value: string) => void; placeholder: string; required?: boolean; value: string }) {
+  return <div className="flex min-h-16 items-center gap-3 px-4 py-3 sm:px-6"><label className="inline-flex h-10 min-w-20 items-center justify-center rounded-2xl border border-blue-100 bg-white/76 px-3 text-sm font-semibold text-blue-950 shadow-sm" htmlFor={id}>{label}</label><div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{chips.map((chip) => <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-blue-100 bg-blue-50/80 px-3 py-1.5 text-sm font-medium text-blue-950" key={chip}>{chip}<button aria-label={`Remove ${chip}`} className="text-blue-600 hover:text-blue-900" onClick={() => onRemove(chip)} type="button">x</button></span>)}<input className="h-9 min-w-[11rem] flex-1 bg-transparent text-[15px] text-blue-950 outline-none placeholder:text-slate-400" id={id} onChange={(event) => onValueChange(event.target.value)} placeholder={chips.length ? "Add another..." : placeholder} required={required && !chips.length} value={value} /></div>{children ? <div className="flex shrink-0 items-center gap-1">{children}</div> : null}</div>;
+}
+
+function ComposeIconButton({ children, label, onClick }: { children: React.ReactNode; label: string; onClick?: () => void }) { return <button aria-label={label} className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/70 bg-white/58 text-blue-950 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" onClick={onClick} type="button">{children}</button>; }
+function ComposeRailButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="inline-flex h-9 w-9 items-center justify-center rounded-2xl text-blue-950 transition duration-200 hover:bg-white/70" type="button">{children}</button>; }
+function ComposeToolbarButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-blue-950 transition duration-200 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-200" type="button">{children}</button>; }
+function ComposeFooterButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="inline-flex h-9 items-center gap-2 rounded-full px-2.5 font-medium transition duration-200 hover:bg-white/70" type="button">{children}</button>; }
+function recipientChips(value: string) { return value.split(/[;,]/).map((item) => item.trim()).filter(Boolean); }
 function makeFolderNavigation(folders: WebmailFolder[]): FolderNavItem[] {
   return primaryFolderConfig.flatMap((config) => {
     const folder = findFolder(folders, config.label);
