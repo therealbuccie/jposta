@@ -60,6 +60,8 @@ export function EmployeeWorkspaceClient() {
   const [preferences, setPreferences] = React.useState<EmployeePreferences>(defaultEmployeePreferences);
   const [systemDark, setSystemDark] = React.useState(false);
   const [notifications, setNotifications] = React.useState<UiNotification[]>([]);
+  const bootstrapTokenRef = React.useRef<string | null>(null);
+  const refreshRef = React.useRef<((activeToken?: string | null, folderPath?: string, keep?: boolean) => Promise<void>) | null>(null);
 
   const mailbox = identity?.mailbox.address ?? "";
   const displayName = friendlyName(identity?.mailbox.displayName, mailbox);
@@ -135,22 +137,32 @@ export function EmployeeWorkspaceClient() {
     return () => window.removeEventListener("keydown", onKey);
   }, [openCommandPalette]);
   React.useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+
+  React.useEffect(() => {
     const stored = getStoredWebmailSession();
     if (!stored) { setLoading(false); setError("Loading your mailbox failed. Please sign in from your company portal."); return; }
+    if (bootstrapTokenRef.current === stored.token) return;
+    bootstrapTokenRef.current = stored.token;
     setToken(stored.token);
     void refresh(stored.token, "INBOX", false).finally(() => setLoading(false));
-  }, [refresh]);
+    // Bootstrap must run once per mounted mailbox session; refresh is intentionally not a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   React.useEffect(() => {
     if (!token) return;
     let running = false;
     const id = window.setInterval(() => {
       if (document.visibilityState === "hidden" || running) return;
+      const currentRefresh = refreshRef.current;
+      if (!currentRefresh) return;
       running = true;
-      void refresh(token, activeFolder, true).finally(() => { running = false; });
+      void currentRefresh(token, activeFolder, true).finally(() => { running = false; });
     }, 45000);
     return () => window.clearInterval(id);
-  }, [activeFolder, refresh, token]);
+  }, [activeFolder, token]);
 
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && compose.open && !topbarPanel) void closeComposer(); };
