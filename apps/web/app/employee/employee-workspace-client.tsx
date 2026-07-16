@@ -2,7 +2,7 @@
 "use client";
 
 import * as React from "react";
-import { AlignCenter, AlignLeft, AlignRight, Archive, ArrowLeft, Bell, Bold, Calendar, Check, ChevronDown, ChevronRight, Cloud, Code, Command, Download, Forward, Folder, Image, Inbox, Italic, Link, List, LogOut, Mail, MailPlus, Maximize2, Menu, Mic, Minimize2, Monitor, Moon, MoreHorizontal, Paperclip, Quote, Redo2, RefreshCw, Reply, ReplyAll, Save, Search, Send, Settings, ShieldAlert, Smile, Sparkles, Star, Sun, Trash2, Underline, Undo2, User, Users, X } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Archive, ArrowLeft, Bell, Bold, Calendar, Check, ChevronDown, ChevronRight, Cloud, Code, Command, Download, Forward, Folder, Image, Inbox, Italic, Link, List, LogOut, Mail, MailPlus, Maximize2, Menu, Mic, Minimize2, Monitor, Moon, MoreHorizontal, Paperclip, Printer, Quote, Redo2, RefreshCw, Reply, ReplyAll, Save, Search, Send, Settings, ShieldAlert, Smile, Sparkles, Star, Sun, Trash2, Underline, Undo2, User, Users, X } from "lucide-react";
 import { GlassButton, GlassInput } from "@jposta/ui";
 import { jpostaApi, type WebmailFolder, type WebmailMe, type WebmailMessage, type WebmailMessageDetail } from "@/lib/api-client";
 import { clearWebmailSession, getStoredWebmailSession } from "@/lib/webmail-session";
@@ -13,6 +13,7 @@ type ComposeState = { attachments: File[]; bcc: string; body: string; cc: string
 type MessagePage = { folder: string; hasMore: boolean; messages: WebmailMessage[]; page: number; pageSize: number; total: number };
 type FolderNavItem = { folder?: WebmailFolder | undefined; icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>; label: string; path: string };
 type TopbarPanel = "command" | "theme" | "notifications" | "settings" | "profile" | null;
+type MessageActionPanel = "move" | "more" | null;
 type ThemeMode = "light" | "dark" | "system";
 type DensityMode = "compact" | "comfortable";
 type EmployeePreferences = { autoMarkRead: boolean; autoSaveDrafts: boolean; confirmDelete: boolean; defaultComposeMode: "window" | "focus"; density: DensityMode; defaultCcBcc: boolean; refreshInterval: string; remoteImages: boolean; theme: ThemeMode };
@@ -60,6 +61,9 @@ export function EmployeeWorkspaceClient() {
   const [preferences, setPreferences] = React.useState<EmployeePreferences>(defaultEmployeePreferences);
   const [systemDark, setSystemDark] = React.useState(false);
   const [notifications, setNotifications] = React.useState<UiNotification[]>([]);
+  const [messageActionPanel, setMessageActionPanel] = React.useState<MessageActionPanel>(null);
+  const [folderPickerQuery, setFolderPickerQuery] = React.useState("");
+  const [movingMessage, setMovingMessage] = React.useState(false);
   const bootstrapTokenRef = React.useRef<string | null>(null);
   const activeFolderPathRef = React.useRef("INBOX");
   const loadRequestRef = React.useRef(0);
@@ -78,14 +82,19 @@ export function EmployeeWorkspaceClient() {
   const folderNav = makeFolderNavigation(folders);
   const customFolders = makeCustomFolders(folders, folderNav);
   const unreadCount = folder?.unread ?? page.messages.filter((message) => message.unread).length;
-  const archivePath = findFolder(folders, "Archive")?.path;
+  const archiveFolder = findArchiveFolder(folders);
+  const archivePath = archiveFolder?.path;
+  const inArchive = Boolean(archivePath && archivePath === activeFolder);
+  const moveFolders = folders.filter((item) => item.path !== activeFolder);
+  const filteredMoveFolders = moveFolders.filter((item) => `${item.name} ${item.path}`.toLowerCase().includes(folderPickerQuery.toLowerCase().trim()));
   const effectiveTheme = preferences.theme === "system" ? (systemDark ? "dark" : "light") : preferences.theme;
+  const compact = preferences.density === "compact";
   const unreadNotifications = notifications.filter((item) => !item.read).length + (unreadCount > 0 ? 1 : 0);
 
   const showNotice = React.useCallback((message: string, tone: Notice["tone"] = "info") => { setNotice({ message, tone }); window.setTimeout(() => setNotice(null), 3500); setNotifications((current) => persistNotifications([{ id: `${Date.now()}-${Math.random().toString(16).slice(2)}`, title: tone === "error" ? "Mailbox needs attention" : message, description: message, read: false, timestamp: Date.now(), tone }, ...current].slice(0, 12))); }, []);
   const expire = React.useCallback(() => { clearWebmailSession(); window.location.assign(window.location.origin); }, []);
   const signOut = React.useCallback(() => { clearWebmailSession(); window.location.assign(window.location.origin); }, []);
-  const openPanel = React.useCallback((panel: Exclude<TopbarPanel, null>) => { setTopbarPanel((current) => current === panel ? null : panel); if (panel === "command") { setCommandQuery(""); setCommandIndex(0); } }, []);
+  const openPanel = React.useCallback((panel: Exclude<TopbarPanel, null>) => { setMessageActionPanel(null); setTopbarPanel((current) => current === panel ? null : panel); if (panel === "command") { setCommandQuery(""); setCommandIndex(0); } }, []);
   const openCommandPalette = React.useCallback(() => openPanel("command"), [openPanel]);
   const openThemeMenu = React.useCallback(() => openPanel("theme"), [openPanel]);
   const openNotificationsPanel = React.useCallback(() => openPanel("notifications"), [openPanel]);
@@ -178,12 +187,21 @@ export function EmployeeWorkspaceClient() {
   }, [activeFolder, token]);
 
   React.useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && compose.open && !topbarPanel) void closeComposer(); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && messageActionPanel) setMessageActionPanel(null);
+      if (event.key === "Escape" && compose.open && !topbarPanel && !messageActionPanel) void closeComposer();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // closeComposer intentionally stays as the existing async discard flow.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [compose.open, topbarPanel]);
+  }, [compose.open, messageActionPanel, topbarPanel]);
+
+  function toggleMessagePanel(panel: Exclude<MessageActionPanel, null>) {
+    setTopbarPanel(null);
+    setMessageActionPanel((current) => current === panel ? null : panel);
+    if (panel === "move") setFolderPickerQuery("");
+  }
 
   function updatePreferences(patch: Partial<EmployeePreferences>) {
     setPreferences((current) => persistPreferences({ ...current, ...patch }));
@@ -237,15 +255,18 @@ export function EmployeeWorkspaceClient() {
     catch (caught) { showActionError(caught); }
   }
   async function moveSelected(path: string) {
-    if (!token || !selected) return;
-    const uid = selected.uid; removeMessage(uid); setSelected(null);
+    if (!token || !selected || path === activeFolder || movingMessage) return;
+    const uid = selected.uid;
+    setMovingMessage(true);
+    removeMessage(uid); setSelected(null); setSelectedUid(null); setMessageActionPanel(null);
     try { await jpostaApi.webmailMove(token, uid, { fromFolder: activeFolder, toFolder: path }); await refresh(token, activeFolder, false); showNotice("Email moved.", "success"); }
     catch (caught) { showActionError(caught); await refresh(token, activeFolder, true); }
+    finally { setMovingMessage(false); }
   }
   async function deleteSelected() {
     if (!token || !selected) return;
     if (trash && !window.confirm("Permanently delete this email?")) return;
-    const uid = selected.uid; removeMessage(uid); setSelected(null);
+    const uid = selected.uid; setMessageActionPanel(null); removeMessage(uid); setSelected(null); setSelectedUid(null);
     try { await jpostaApi.webmailDelete(token, uid, activeFolder); await refresh(token, activeFolder, false); showNotice(trash ? "Email deleted." : "Email moved to Trash.", "success"); }
     catch (caught) { showActionError(caught); await refresh(token, activeFolder, true); }
   }
@@ -296,23 +317,39 @@ export function EmployeeWorkspaceClient() {
       link.href = url; link.download = attachment.filename; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
     } catch { showNotice("Attachment could not be downloaded.", "error"); }
   }
+  function printSelectedMessage() {
+    if (!selected) return;
+    const printWindow = window.open("", "jposta-print-message", "width=900,height=700");
+    if (!printWindow) { showNotice("Pop-up blocked. Allow pop-ups to print this message.", "error"); return; }
+    printWindow.document.write(`<!doctype html><html><head><title>${escapeHtml(selected.subject)}</title><style>body{font-family:Inter,Arial,sans-serif;padding:32px;color:#0f172a;line-height:1.55}.meta{color:#475569;margin-bottom:24px}hr{border:0;border-top:1px solid #dbeafe;margin:24px 0}</style></head><body><h1>${escapeHtml(selected.subject)}</h1><div class="meta"><p><strong>From:</strong> ${escapeHtml(selected.from)}</p><p><strong>To:</strong> ${escapeHtml(selected.to || mailbox)}</p><p><strong>Date:</strong> ${escapeHtml(formatLongDate(selected.date))}</p></div><hr />${renderEmailHtml(selected)}</body></html>`);
+    printWindow.document.close(); printWindow.focus(); printWindow.print();
+  }
+
   function patchMessage(uid: number, patch: Partial<WebmailMessage>) { setPage((current) => ({ ...current, messages: current.messages.map((message) => message.uid === uid ? { ...message, ...patch } : message) })); }
   function removeMessage(uid: number) { setPage((current) => ({ ...current, total: Math.max(0, current.total - 1), messages: current.messages.filter((message) => message.uid !== uid) })); }
   function showActionError(caught: unknown) { if (isExpired(caught)) expire(); else showNotice(errorMessage(caught, "Action could not be completed. Please try again."), "error"); }
 
   return (
-    <div className="h-dvh min-h-0 overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(147,197,253,0.45),transparent_30%),radial-gradient(circle_at_80%_10%,rgba(221,214,254,0.45),transparent_34%),linear-gradient(135deg,#edf7ff_0%,#f8fbff_45%,#eaf3ff_100%)] text-slate-950">
+    <div className={`h-dvh min-h-0 overflow-hidden text-slate-950 transition-colors ${effectiveTheme === "dark" ? "bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.26),transparent_32%),radial-gradient(circle_at_80%_10%,rgba(99,102,241,0.22),transparent_34%),linear-gradient(135deg,#071224_0%,#0d1b31_50%,#10233d_100%)]" : "bg-[radial-gradient(circle_at_top_left,rgba(147,197,253,0.45),transparent_30%),radial-gradient(circle_at_80%_10%,rgba(221,214,254,0.45),transparent_34%),linear-gradient(135deg,#edf7ff_0%,#f8fbff_45%,#eaf3ff_100%)]"}`}>
       <style>{`
         .jposta-email-preview { max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; }
 
         .jposta-email-preview :where(img) { max-width: 100%; height: auto; }
         .jposta-email-preview :where(table) { max-width: 100%; }
+        .jposta-employee-dark :where(aside, section, header > div, .jposta-glass-panel) { background-color: rgba(15,23,42,0.72) !important; border-color: rgba(147,197,253,0.26) !important; color: #eaf2ff !important; }
+        .jposta-employee-dark :where(h1,h2,h3,p,span,time,button,label,input,textarea,select) { color: inherit; }
+        .jposta-employee-dark :where(.text-blue-950,.text-blue-900,.text-blue-800,.text-slate-700,.text-slate-600,.text-slate-500) { color: #dbeafe !important; }
+        .jposta-employee-dark :where(input,textarea,select) { background-color: rgba(15,23,42,0.36) !important; color: #eaf2ff !important; }
+        .jposta-employee-dark .jposta-email-preview { color: #f8fbff; }
+        .jposta-density-compact .jposta-message-row { padding-top: 0.375rem !important; padding-bottom: 0.375rem !important; gap: 0.625rem !important; }
+        .jposta-density-compact .jposta-message-row :where(.h-7.w-7) { height: 1.5rem !important; width: 1.5rem !important; }
+        .jposta-density-compact nav button { min-height: 0; }
 
       `}</style>
       <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.42)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.34)_1px,transparent_1px)] bg-[size:44px_44px] opacity-50" />
       <div className="pointer-events-none fixed left-[12%] top-[14%] h-72 w-72 rounded-full bg-sky-200/45 blur-3xl" />
       <div className="pointer-events-none fixed bottom-[8%] right-[18%] h-80 w-80 rounded-full bg-blue-100/70 blur-3xl" />
-      <div className="relative z-10 flex h-dvh min-h-0 flex-col gap-2 overflow-hidden p-2 lg:p-2.5">
+      <div className={`jposta-employee-shell relative z-10 flex h-dvh min-h-0 flex-col overflow-hidden p-2 transition-colors lg:p-2.5 ${compact ? "jposta-density-compact gap-1.5" : "jposta-density-comfortable gap-2"} ${effectiveTheme === "dark" ? "jposta-employee-dark" : "jposta-employee-light"}`}>
         <header className="relative z-30 grid gap-2 lg:grid-cols-[15rem_minmax(0,40rem)_auto] xl:grid-cols-[15.5rem_minmax(32rem,40rem)_auto]">
           <div className="hidden items-center gap-2 rounded-[1rem] border border-white/70 bg-white/42 px-3 py-2 shadow-[0_18px_60px_rgba(37,99,235,0.12)] backdrop-blur-2xl lg:flex"><LogoMark /><div className="min-w-0"><p className="truncate text-sm text-slate-500">Mailbox</p><p className="truncate text-base font-semibold text-blue-950">{workspace}</p></div></div>
           <div className="flex items-center gap-3 rounded-[1.05rem] border border-white/70 bg-white/58 p-1.5 shadow-[0_20px_70px_rgba(30,64,175,0.14)] backdrop-blur-2xl">
@@ -330,7 +367,7 @@ export function EmployeeWorkspaceClient() {
             <div className="min-h-0 flex-1 overflow-hidden p-2.5">
               <button className="mb-2.5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-[1rem] bg-blue-500 text-sm font-semibold text-white shadow-[0_18px_36px_rgba(37,99,235,0.28)] transition hover:-translate-y-0.5 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300" onClick={() => beginCompose("compose")} type="button"><MailPlus className="h-5 w-5" aria-hidden="true" />Compose</button>
               <nav className="min-h-0 overflow-y-auto pr-1 grid gap-1" aria-label="Mail folders">
-                {folderNav.map((item) => <FolderButton active={item.path === activeFolder} item={item} key={item.path} onClick={() => void openFolder(item.path)} />)}
+                {folderNav.map((item) => <FolderButton active={item.path === activeFolder} compact={compact} item={item} key={item.path} onClick={() => void openFolder(item.path)} />)}
                 <button className="flex h-9 items-center gap-2.5 rounded-xl px-2.5 text-[13px] font-medium text-blue-950 transition hover:bg-white/60 focus:outline-none focus:ring-2 focus:ring-blue-200" onClick={() => setShowMoreFolders((current) => !current)} type="button"><MoreHorizontal className="h-3.5 w-3.5 text-blue-800" aria-hidden="true" /><span className="flex-1 text-left">More</span><ChevronRight className={`h-3.5 w-3.5 text-blue-800 transition ${showMoreFolders ? "rotate-90" : ""}`} aria-hidden="true" /></button>
                 {showMoreFolders ? <div className="mt-1 grid gap-1 border-l border-blue-100/80 pl-3">{customFolders.length ? customFolders.map((item) => <FolderButton active={item.path === activeFolder} compact item={item} key={item.path} onClick={() => void openFolder(item.path)} />) : <p className="px-3 py-2 text-xs text-slate-500">No additional folders.</p>}</div> : null}
               </nav>
@@ -349,7 +386,7 @@ export function EmployeeWorkspaceClient() {
             {mobileDetail ? <div className="mb-3 lg:hidden"><GlassButton onClick={() => setMobileDetail(false)} variant="glass"><ArrowLeft className="h-4 w-4" aria-hidden="true" />Back to inbox</GlassButton></div> : null}
             {!selected && !detailLoading ? <div className="flex h-full min-h-[28rem] items-center justify-center p-8 text-center text-slate-500"><div><Mail className="mx-auto mb-4 h-8 w-8 text-blue-500" aria-hidden="true" /><p className="text-base font-medium text-blue-950">Select an email to read.</p><p className="mt-1 text-sm">Your message preview will open here.</p></div></div> : null}
             {detailLoading ? <PreviewLoading /> : null}
-            {selected ? <article className="flex h-full min-h-0 flex-col overflow-hidden"><header className="border-b border-white/60 p-2.5 sm:p-3"><div className="mb-2 flex items-center justify-between gap-1.5 text-blue-900"><div className="flex flex-wrap gap-2"><IconAction label="Reply" onClick={() => beginCompose("reply")}><Reply className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label="Reply all" onClick={() => beginCompose("reply-all")}><ReplyAll className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label="Archive" disabled={!archivePath} onClick={() => archivePath && void moveSelected(archivePath)}><Archive className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label="Delete" onClick={() => void deleteSelected()}><Trash2 className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label={selected.unread ? "Mark read" : "Mark unread"} onClick={() => void setRead()}><Mail className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label="Move" disabled={!customFolders.length} onClick={() => customFolders[0] && void moveSelected(customFolders[0].path)}><Folder className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label="More"><MoreHorizontal className="h-4 w-4" aria-hidden="true" /></IconAction></div><IconAction label="Star" onClick={() => void toggleStar()}><Star className={`h-5 w-5 ${selected.starred ? "fill-amber-400 text-amber-500" : ""}`} aria-hidden="true" /></IconAction></div><div className="flex items-start justify-between gap-4"><div className="min-w-0"><div className="mb-2 flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold leading-tight text-blue-950">{selected.subject}</h2><span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">{folder?.name || activeFolder}</span></div><div className="flex items-center gap-2.5"><Avatar name={displayAddressName(selected.from)} /><div className="min-w-0"><p className="truncate text-[13px] font-semibold text-blue-950">{displayAddressName(selected.from)}</p><p className="truncate text-xs text-slate-500">to {selected.to || mailbox}</p>{selected.cc ? <p className="truncate text-xs text-slate-500">cc {selected.cc}</p> : null}</div></div></div><div className="hidden shrink-0 text-right sm:block"><time className="text-xs font-medium text-blue-900">{formatDate(selected.date)}</time><p className="mt-1 text-xs text-slate-500">{formatLongDate(selected.date)}</p></div></div></header><div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"><div className="mx-auto max-w-[850px]"><div className="jposta-email-preview max-w-none text-slate-950" dangerouslySetInnerHTML={{ __html: renderEmailHtml(selected) }} />{selected.attachments.length ? <div className="mt-4 grid gap-2"><h3 className="text-[13px] font-semibold text-blue-950">Attachments</h3>{selected.attachments.map((attachment) => <button className="flex items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-white/72 p-2.5 text-left text-xs shadow-sm transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" key={attachment.partId} onClick={() => void downloadAttachment(attachment)} type="button"><span className="flex min-w-0 items-center gap-3"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-600"><Paperclip className="h-4 w-4" aria-hidden="true" /></span><span className="min-w-0"><span className="block truncate font-medium text-blue-950">{attachment.filename}</span><span className="text-xs text-slate-500">{attachment.contentType} / {formatBytes(attachment.size)}</span></span></span><Download className="h-4 w-4 shrink-0 text-blue-700" aria-hidden="true" /></button>)}</div> : null}</div></div><footer className="shrink-0 border-t border-white/60 p-2.5"><div className="grid gap-2 sm:grid-cols-2"><GlassButton onClick={() => beginCompose("reply")} variant="glass"><Reply className="h-4 w-4" aria-hidden="true" />Reply</GlassButton><GlassButton onClick={() => beginCompose("forward")} variant="glass"><Forward className="h-4 w-4" aria-hidden="true" />Forward</GlassButton></div></footer></article> : null}
+            {selected ? <article className="flex h-full min-h-0 flex-col overflow-hidden"><header className="border-b border-white/60 p-2.5 sm:p-3"><div className="mb-2 flex items-center justify-between gap-1.5 text-blue-900"><div className="flex flex-wrap gap-2"><IconAction label="Reply" onClick={() => beginCompose("reply")}><Reply className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label="Reply all" onClick={() => beginCompose("reply-all")}><ReplyAll className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label="Archive" disabled={!archivePath || inArchive || movingMessage} onClick={() => archivePath && void moveSelected(archivePath)}><Archive className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label="Delete" onClick={() => void deleteSelected()}><Trash2 className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction label={selected.unread ? "Mark read" : "Mark unread"} onClick={() => void setRead()}><Mail className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction expanded={messageActionPanel === "move"} label="Move" disabled={!moveFolders.length || movingMessage} onClick={() => toggleMessagePanel("move")}><Folder className="h-4 w-4" aria-hidden="true" /></IconAction><IconAction expanded={messageActionPanel === "more"} label="More" onClick={() => toggleMessagePanel("more")}><MoreHorizontal className="h-4 w-4" aria-hidden="true" /></IconAction></div><IconAction label={selected.starred ? "Unstar" : "Star"} onClick={() => void toggleStar()}><Star className={`h-5 w-5 ${selected.starred ? "fill-amber-400 text-amber-500" : ""}`} aria-hidden="true" /></IconAction></div><div className="flex items-start justify-between gap-4"><div className="min-w-0"><div className="mb-2 flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold leading-tight text-blue-950">{selected.subject}</h2><span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">{folder?.name || activeFolder}</span></div><div className="flex items-center gap-2.5"><Avatar name={displayAddressName(selected.from)} /><div className="min-w-0"><p className="truncate text-[13px] font-semibold text-blue-950">{displayAddressName(selected.from)}</p><p className="truncate text-xs text-slate-500">to {selected.to || mailbox}</p>{selected.cc ? <p className="truncate text-xs text-slate-500">cc {selected.cc}</p> : null}</div></div></div><div className="hidden shrink-0 text-right sm:block"><time className="text-xs font-medium text-blue-900">{formatDate(selected.date)}</time><p className="mt-1 text-xs text-slate-500">{formatLongDate(selected.date)}</p></div></div></header><div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"><div className="mx-auto max-w-[850px]"><div className="jposta-email-preview max-w-none text-slate-950" dangerouslySetInnerHTML={{ __html: renderEmailHtml(selected) }} />{selected.attachments.length ? <div className="mt-4 grid gap-2"><h3 className="text-[13px] font-semibold text-blue-950">Attachments</h3>{selected.attachments.map((attachment) => <button className="flex items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-white/72 p-2.5 text-left text-xs shadow-sm transition hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" key={attachment.partId} onClick={() => void downloadAttachment(attachment)} type="button"><span className="flex min-w-0 items-center gap-3"><span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-600"><Paperclip className="h-4 w-4" aria-hidden="true" /></span><span className="min-w-0"><span className="block truncate font-medium text-blue-950">{attachment.filename}</span><span className="text-xs text-slate-500">{attachment.contentType} / {formatBytes(attachment.size)}</span></span></span><Download className="h-4 w-4 shrink-0 text-blue-700" aria-hidden="true" /></button>)}</div> : null}</div></div><footer className="shrink-0 border-t border-white/60 p-2.5"><div className="grid gap-2 sm:grid-cols-2"><GlassButton onClick={() => beginCompose("reply")} variant="glass"><Reply className="h-4 w-4" aria-hidden="true" />Reply</GlassButton><GlassButton onClick={() => beginCompose("forward")} variant="glass"><Forward className="h-4 w-4" aria-hidden="true" />Forward</GlassButton></div></footer></article> : null}
           </section>
         </main>
       </div>
@@ -377,6 +414,26 @@ export function EmployeeWorkspaceClient() {
         unreadCount={unreadCount}
         workspace={workspace}
       />
+      <MessageActionOverlays
+        activeFolder={activeFolder}
+        archivePath={archivePath}
+        filteredMoveFolders={filteredMoveFolders}
+        folders={folders}
+        inArchive={inArchive}
+        moving={movingMessage}
+        onArchive={() => archivePath && void moveSelected(archivePath)}
+        onClose={() => setMessageActionPanel(null)}
+        onDelete={() => void deleteSelected()}
+        onMove={(path) => void moveSelected(path)}
+        onMoveQueryChange={setFolderPickerQuery}
+        onOpenMove={() => { setMessageActionPanel("move"); setFolderPickerQuery(""); }}
+        onPrint={printSelectedMessage}
+        onSetRead={() => void setRead()}
+        onToggleStar={() => void toggleStar()}
+        panel={messageActionPanel}
+        query={folderPickerQuery}
+        selected={selected}
+      />
       {compose.open ? (
         <ComposeWindow
           compose={compose}
@@ -392,6 +449,42 @@ export function EmployeeWorkspaceClient() {
       {notice ? <ToastNotice notice={notice} /> : null}
     </div>
   );
+}
+function MessageActionOverlays({ activeFolder, archivePath, filteredMoveFolders, folders, inArchive, moving, onArchive, onClose, onDelete, onMove, onMoveQueryChange, onOpenMove, onPrint, onSetRead, onToggleStar, panel, query, selected }: { activeFolder: string; archivePath: string | undefined; filteredMoveFolders: WebmailFolder[]; folders: WebmailFolder[]; inArchive: boolean; moving: boolean; onArchive: () => void; onClose: () => void; onDelete: () => void; onMove: (path: string) => void; onMoveQueryChange: (value: string) => void; onOpenMove: () => void; onPrint: () => void; onSetRead: () => void; onToggleStar: () => void; panel: MessageActionPanel; query: string; selected: WebmailMessageDetail | null }) {
+  if (!panel || !selected) return null;
+  const junkPath = findFolder(folders, "Junk")?.path;
+  const trashPath = findFolder(folders, "Trash")?.path;
+  return (
+    <div className="fixed inset-0 z-[54]" onMouseDown={onClose}>
+      {panel === "move" ? (
+        <div aria-label="Add to folder" aria-modal="true" className="absolute right-4 top-24 w-[min(24rem,calc(100vw-2rem))] rounded-[1.35rem] border border-white/75 bg-white/94 p-3 shadow-[0_28px_90px_rgba(30,64,175,0.22)] backdrop-blur-2xl" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+          <div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-sm font-semibold text-blue-950">Add to folder</h2><button aria-label="Close folder picker" className="rounded-full p-1.5 text-blue-900 transition hover:bg-blue-50" onClick={onClose} type="button"><X className="h-4 w-4" aria-hidden="true" /></button></div>
+          <label className="sr-only" htmlFor="employee-move-folder-search">Search folders</label>
+          <input autoFocus className="mb-3 h-9 w-full rounded-xl border border-blue-100 bg-white/95 px-3 text-sm text-blue-950 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-blue-200" id="employee-move-folder-search" onChange={(event) => onMoveQueryChange(event.target.value)} placeholder="Search folders..." value={query} />
+          <div className="grid max-h-[20rem] gap-1 overflow-y-auto pr-1" role="listbox">
+            {filteredMoveFolders.length ? filteredMoveFolders.map((folder) => <button className="flex h-10 items-center gap-3 rounded-xl px-3 text-left text-sm text-blue-950 transition hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-200" disabled={moving} key={folder.path} onClick={() => onMove(folder.path)} role="option" type="button"><Folder className="h-4 w-4 shrink-0 text-blue-700" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{folder.name}</span>{folder.total ? <span className="text-xs text-slate-500">{folder.total}</span> : null}</button>) : <p className="rounded-xl border border-dashed border-blue-100 bg-blue-50/40 px-3 py-6 text-center text-sm text-slate-500">No matching folders.</p>}
+          </div>
+        </div>
+      ) : null}
+      {panel === "more" ? (
+        <div aria-label="More message actions" className="absolute right-4 top-24 w-[min(20rem,calc(100vw-2rem))] rounded-[1.35rem] border border-white/75 bg-white/94 p-2 shadow-[0_28px_90px_rgba(30,64,175,0.22)] backdrop-blur-2xl" onMouseDown={(event) => event.stopPropagation()} role="menu">
+          <MessageMenuAction icon={<Mail className="h-4 w-4" aria-hidden="true" />} label={selected.unread ? "Mark as read" : "Mark as unread"} onClick={onSetRead} />
+          <MessageMenuAction icon={<Star className={`h-4 w-4 ${selected.starred ? "fill-amber-400 text-amber-500" : ""}`} aria-hidden="true" />} label={selected.starred ? "Unstar" : "Star"} onClick={onToggleStar} />
+          <MessageMenuAction icon={<Folder className="h-4 w-4" aria-hidden="true" />} label="Move to folder" onClick={onOpenMove} />
+          <MessageMenuAction disabled={!archivePath || inArchive || moving} icon={<Archive className="h-4 w-4" aria-hidden="true" />} label="Archive" onClick={onArchive} />
+          <MessageMenuAction disabled={!junkPath || junkPath === activeFolder || moving} icon={<ShieldAlert className="h-4 w-4" aria-hidden="true" />} label="Mark as junk" onClick={() => junkPath && onMove(junkPath)} />
+          <MessageMenuAction disabled={!trashPath || trashPath === activeFolder || moving} icon={<Trash2 className="h-4 w-4" aria-hidden="true" />} label="Move to trash" onClick={() => trashPath ? onMove(trashPath) : onDelete()} />
+          <div className="my-1 h-px bg-blue-100" />
+          <MessageMenuAction icon={<Printer className="h-4 w-4" aria-hidden="true" />} label="Print" onClick={onPrint} />
+          <MessageMenuAction disabled icon={<Code className="h-4 w-4" aria-hidden="true" />} label="View message source" />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MessageMenuAction({ disabled, icon, label, onClick }: { disabled?: boolean; icon: React.ReactNode; label: string; onClick?: () => void }) {
+  return <button className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-blue-950 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-45" disabled={disabled} onClick={onClick} role="menuitem" type="button">{icon}<span className="flex-1">{label}</span>{disabled && label === "View message source" ? <span className="text-xs text-slate-400">Soon</span> : null}</button>;
 }
 function TopbarOverlays({ activeFolder, commandIndex, commandItems, commandQuery, displayName, effectiveTheme, mailbox, notifications, onClearNotifications, onClose, onCommandIndexChange, onCommandQueryChange, onMarkNotificationsRead, onPreferencesChange, onSignOut, openPanel, panel, preferences, setNotifications, storageText, unreadCount, workspace }: { activeFolder: string; commandIndex: number; commandItems: CommandItem[]; commandQuery: string; displayName: string; effectiveTheme: "light" | "dark"; mailbox: string; notifications: UiNotification[]; onClearNotifications: () => void; onClose: () => void; onCommandIndexChange: (value: number) => void; onCommandQueryChange: (value: string) => void; onMarkNotificationsRead: () => void; onPreferencesChange: (patch: Partial<EmployeePreferences>) => void; onSignOut: () => void; openPanel: (panel: Exclude<TopbarPanel, null>) => void; panel: TopbarPanel; preferences: EmployeePreferences; setNotifications: React.Dispatch<React.SetStateAction<UiNotification[]>>; storageText: string; unreadCount: number; workspace: string }) {
   const filteredCommands = commandItems.filter((item) => item.label.toLowerCase().includes(commandQuery.toLowerCase().trim()));
@@ -591,7 +684,14 @@ function findFolder(folders: WebmailFolder[], label: string) {
     return config.aliases.some((alias) => value.includes(alias));
   });
 }
-function specialUseForLabel(label: string) {
+function findArchiveFolder(folders: WebmailFolder[]) {
+  const specialFolder = folders.find((folder) => normalizeSpecialUse(folder.specialUse) === "\\archive");
+  if (specialFolder) return specialFolder;
+  return folders.find((folder) => {
+    const value = `${folder.name} ${folder.path}`.toLowerCase();
+    return /(^|[\s/.])(archive|archives|all mail)([\s/.]|$)/i.test(value);
+  });
+}function specialUseForLabel(label: string) {
   const values: Record<string, string> = { Drafts: "\\drafts", Inbox: "\\inbox", Junk: "\\junk", Sent: "\\sent", Trash: "\\trash" };
   return values[label];
 }
@@ -627,10 +727,10 @@ function FolderButton({ active, compact = false, item, onClick }: { active: bool
   return <button className={`${compact ? "h-10" : "h-12"} flex items-center gap-3 rounded-2xl px-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-200 ${active ? "bg-blue-100/80 text-blue-700 shadow-sm" : "text-blue-950 hover:bg-white/60"}`} onClick={onClick} type="button"><Icon className={`h-5 w-5 ${active ? "text-blue-600" : "text-blue-800"}`} aria-hidden="true" /><span className="min-w-0 flex-1 truncate text-left">{item.label}</span>{item.folder?.unread ? <span className="rounded-full bg-white/82 px-2 py-0.5 text-xs text-blue-700 shadow-sm">{item.folder.unread}</span> : null}</button>;
 }
 function MessageRow({ active, message, onOpen, onToggleStar }: { active: boolean; message: WebmailMessage; onOpen: () => void; onToggleStar: () => void }) {
-  return <button aria-label={`Open email ${message.subject}`} className={`group grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 px-2 py-2 text-left transition focus:outline-none focus:ring-2 focus:ring-blue-200 sm:px-3 ${active ? "rounded-2xl border border-blue-200 bg-blue-50/84 shadow-sm" : "hover:rounded-2xl hover:bg-white/48"}`} onClick={onOpen} type="button"><span className="mt-1 flex flex-col items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${message.unread ? "bg-blue-500" : "border border-blue-200 bg-white/70"}`} /><span className="hidden h-7 w-7 items-center justify-center rounded-full bg-white/70 text-xs font-semibold text-blue-800 shadow-sm sm:inline-flex">{senderInitial(message.from)}</span></span><span className="min-w-0"><span className="flex items-center gap-2"><span className={`truncate text-sm ${message.unread ? "font-semibold text-blue-950" : "font-medium text-slate-700"}`}>{displayAddressName(message.from)}</span>{message.hasAttachments ? <Paperclip className="h-3.5 w-3.5 shrink-0 text-blue-600" aria-label="Has attachments" /> : null}</span><span className="mt-1 block truncate text-[13px] font-semibold text-blue-950">{message.subject || "(No subject)"}</span><span className="mt-0.5 block truncate text-xs leading-5 text-slate-500">{message.preview || message.subject}</span></span><span className="flex flex-col items-end gap-2"><time className="whitespace-nowrap text-xs font-medium text-blue-900">{formatDate(message.date)}</time><span aria-label={message.starred ? "Unstar email" : "Star email"} className="rounded-full p-1 text-blue-700 transition hover:bg-white" onClick={(event) => { event.stopPropagation(); onToggleStar(); }} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleStar(); } }}><Star className={`h-4 w-4 ${message.starred ? "fill-amber-400 text-amber-500" : ""}`} aria-hidden="true" /></span></span></button>;
+  return <button aria-label={`Open email ${message.subject}`} className={`jposta-message-row group grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 px-2 py-2 text-left transition focus:outline-none focus:ring-2 focus:ring-blue-200 sm:px-3 ${active ? "rounded-2xl border border-blue-200 bg-blue-50/84 shadow-sm" : "hover:rounded-2xl hover:bg-white/48"}`} onClick={onOpen} type="button"><span className="mt-1 flex flex-col items-center gap-2"><span className={`h-2.5 w-2.5 rounded-full ${message.unread ? "bg-blue-500" : "border border-blue-200 bg-white/70"}`} /><span className="hidden h-7 w-7 items-center justify-center rounded-full bg-white/70 text-xs font-semibold text-blue-800 shadow-sm sm:inline-flex">{senderInitial(message.from)}</span></span><span className="min-w-0"><span className="flex items-center gap-2"><span className={`truncate text-sm ${message.unread ? "font-semibold text-blue-950" : "font-medium text-slate-700"}`}>{displayAddressName(message.from)}</span>{message.hasAttachments ? <Paperclip className="h-3.5 w-3.5 shrink-0 text-blue-600" aria-label="Has attachments" /> : null}</span><span className="mt-1 block truncate text-[13px] font-semibold text-blue-950">{message.subject || "(No subject)"}</span><span className="mt-0.5 block truncate text-xs leading-5 text-slate-500">{message.preview || message.subject}</span></span><span className="flex flex-col items-end gap-2"><time className="whitespace-nowrap text-xs font-medium text-blue-900">{formatDate(message.date)}</time><span aria-label={message.starred ? "Unstar email" : "Star email"} className="rounded-full p-1 text-blue-700 transition hover:bg-white" onClick={(event) => { event.stopPropagation(); onToggleStar(); }} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onToggleStar(); } }}><Star className={`h-4 w-4 ${message.starred ? "fill-amber-400 text-amber-500" : ""}`} aria-hidden="true" /></span></span></button>;
 }
 function StateNotice({ message, tone = "info" }: { message: string; tone?: Notice["tone"] }) { return <div className={`m-3 rounded-2xl border bg-white/68 p-3 text-sm shadow-sm backdrop-blur-xl ${tone === "error" ? "border-rose-200 text-rose-700" : "border-blue-100 text-slate-600"}`}>{message}</div>; }
 function LoadingList() { return <div className="grid gap-2 p-3" aria-label="Loading your mailbox">{Array.from({ length: 7 }).map((_, index) => <div className="h-16 animate-pulse rounded-2xl bg-white/60" key={index} />)}</div>; }
 function PreviewLoading() { return <div className="grid gap-4 p-6"><div className="h-8 w-2/3 animate-pulse rounded-full bg-white/78" /><div className="h-4 w-1/2 animate-pulse rounded-full bg-white/70" /><div className="h-48 animate-pulse rounded-[1.5rem] bg-white/66" /></div>; }
-function IconAction({ children, disabled, label, onClick }: { children: React.ReactNode; disabled?: boolean; label: string; onClick?: () => void }) { return <button aria-label={label} className="inline-flex h-7 w-7 items-center justify-center rounded-2xl text-blue-900 transition hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-40" disabled={disabled} onClick={onClick} title={label} type="button">{children}</button>; }
+function IconAction({ children, disabled, expanded, label, onClick }: { children: React.ReactNode; disabled?: boolean; expanded?: boolean; label: string; onClick?: () => void }) { return <button aria-expanded={expanded} aria-label={label} className="inline-flex h-7 w-7 items-center justify-center rounded-2xl text-blue-900 transition hover:bg-white/60 disabled:cursor-not-allowed disabled:opacity-40" disabled={disabled} onClick={onClick} title={label} type="button">{children}</button>; }
 function ToastNotice({ notice }: { notice: Notice }) { return <div className={`fixed right-3 top-3 z-[60] rounded-2xl border bg-white/95 px-4 py-3 text-sm shadow-[0_18px_50px_rgba(30,64,175,0.18)] ${notice.tone === "error" ? "border-rose-200 text-rose-800" : "border-blue-200 text-blue-800"}`}>{notice.message}</div>; }
