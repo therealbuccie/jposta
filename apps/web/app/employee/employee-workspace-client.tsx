@@ -38,7 +38,7 @@ export function EmployeeWorkspaceClient() {
   const [token, setToken] = React.useState<string | null>(null);
   const [identity, setIdentity] = React.useState<WebmailMe | null>(null);
   const [folders, setFolders] = React.useState<WebmailFolder[]>([]);
-  const [activeFolder, setActiveFolder] = React.useState("INBOX");
+  const [activeFolderPath, setActiveFolderPath] = React.useState("INBOX");
   const [page, setPage] = React.useState<MessagePage>(blankPage);
   const [selected, setSelected] = React.useState<WebmailMessageDetail | null>(null);
   const [selectedUid, setSelectedUid] = React.useState<number | null>(null);
@@ -61,7 +61,14 @@ export function EmployeeWorkspaceClient() {
   const [systemDark, setSystemDark] = React.useState(false);
   const [notifications, setNotifications] = React.useState<UiNotification[]>([]);
   const bootstrapTokenRef = React.useRef<string | null>(null);
+  const activeFolderPathRef = React.useRef("INBOX");
+  const loadRequestRef = React.useRef(0);
   const refreshRef = React.useRef<((activeToken?: string | null, folderPath?: string, keep?: boolean) => Promise<void>) | null>(null);
+  const setSelectedFolder = React.useCallback((path: string) => {
+    activeFolderPathRef.current = path;
+    setActiveFolderPath(path);
+  }, []);
+  const activeFolder = activeFolderPath;
 
   const mailbox = identity?.mailbox.address ?? "";
   const displayName = friendlyName(identity?.mailbox.displayName, mailbox);
@@ -85,19 +92,25 @@ export function EmployeeWorkspaceClient() {
   const openSettingsDrawer = React.useCallback(() => openPanel("settings"), [openPanel]);
   const openProfileMenu = React.useCallback(() => openPanel("profile"), [openPanel]);
 
-  const loadMessages = React.useCallback(async (activeToken: string, nextFolder: string, nextPage = 1, nextSearch = search, keep = false) => {
-    setMessagesLoading(true); setError(null); setActiveFolder(nextFolder);
+  const loadMessages = React.useCallback(async (activeToken: string, requestedFolderPath: string, nextPage = 1, nextSearch = search, keep = false) => {
+    const requestId = ++loadRequestRef.current;
+    setMessagesLoading(true); setError(null); setSelectedFolder(requestedFolderPath);
     try {
-      const params = new URLSearchParams({ folder: nextFolder, page: String(nextPage), pageSize: String(pageSize) });
+      const params = new URLSearchParams({ folder: requestedFolderPath, page: String(nextPage), pageSize: String(pageSize) });
       if (nextSearch.trim()) params.set("search", nextSearch.trim());
       const result = await jpostaApi.webmailMessages(activeToken, `?${params.toString()}`);
-      setPage(result); setActiveFolder(result.folder || nextFolder);
+      if (requestId !== loadRequestRef.current) return;
+      setPage({ ...result, folder: requestedFolderPath });
       if (!keep) { setSelected(null); setSelectedUid(null); setMobileDetail(false); }
-    } catch (caught) { if (isExpired(caught)) expire(); else setError(errorMessage(caught, "We couldn't connect to this folder. Please try again.")); }
-    finally { setMessagesLoading(false); }
-  }, [expire, search]);
+    } catch (caught) {
+      if (requestId !== loadRequestRef.current) return;
+      if (isExpired(caught)) expire(); else setError(errorMessage(caught, "We couldn't connect to this folder. Please try again."));
+    } finally {
+      if (requestId === loadRequestRef.current) setMessagesLoading(false);
+    }
+  }, [expire, search, setSelectedFolder]);
 
-  const refresh = React.useCallback(async (activeToken = token, folderPath = activeFolder, keep = true) => {
+  const refresh = React.useCallback(async (activeToken = token, folderPath = activeFolderPathRef.current, keep = true) => {
     if (!activeToken) return;
     setError(null);
     try {
@@ -105,7 +118,7 @@ export function EmployeeWorkspaceClient() {
       setIdentity(me); setFolders(folderResult.folders);
       await loadMessages(activeToken, resolveFolder(folderResult.folders, folderPath), page.page, search, keep);
     } catch (caught) { if (isExpired(caught)) expire(); else setError(errorMessage(caught, "We couldn't connect to your mailbox. Please try again.")); }
-  }, [activeFolder, expire, loadMessages, page.page, search, token]);
+  }, [expire, loadMessages, page.page, search, token]);
 
   React.useEffect(() => {
     setPreferences(readEmployeePreferences());
