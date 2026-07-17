@@ -330,25 +330,49 @@ export function EmployeeWorkspaceClient() {
   function showActionError(caught: unknown) { if (isExpired(caught)) expire(); else showNotice(errorMessage(caught, "Action could not be completed. Please try again."), "error"); }
 
   return (
-    <div className={`h-dvh min-h-0 overflow-hidden text-slate-950 transition-colors ${effectiveTheme === "dark" ? "bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.26),transparent_32%),radial-gradient(circle_at_80%_10%,rgba(99,102,241,0.22),transparent_34%),linear-gradient(135deg,#071224_0%,#0d1b31_50%,#10233d_100%)]" : "bg-[radial-gradient(circle_at_top_left,rgba(147,197,253,0.45),transparent_30%),radial-gradient(circle_at_80%_10%,rgba(221,214,254,0.45),transparent_34%),linear-gradient(135deg,#edf7ff_0%,#f8fbff_45%,#eaf3ff_100%)]"}`}>
+    <div className={`jposta-employee-root h-dvh min-h-0 overflow-hidden text-slate-950 transition-colors ${effectiveTheme === "dark" ? "jposta-employee-root-dark bg-[radial-gradient(circle_at_top_left,rgba(76,141,255,0.20),transparent_34%),radial-gradient(circle_at_82%_12%,rgba(99,102,241,0.15),transparent_36%),linear-gradient(135deg,#07111F_0%,#091527_48%,#0C1628_100%)]" : "jposta-employee-root-light bg-[radial-gradient(circle_at_top_left,rgba(147,197,253,0.45),transparent_30%),radial-gradient(circle_at_80%_10%,rgba(221,214,254,0.45),transparent_34%),linear-gradient(135deg,#edf7ff_0%,#f8fbff_45%,#eaf3ff_100%)]"}`}>
       <style>{`
         .jposta-email-preview { max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; }
-
         .jposta-email-preview :where(img) { max-width: 100%; height: auto; }
         .jposta-email-preview :where(table) { max-width: 100%; }
-        .jposta-employee-dark :where(aside, section, header > div, .jposta-glass-panel) { background-color: rgba(15,23,42,0.72) !important; border-color: rgba(147,197,253,0.26) !important; color: #eaf2ff !important; }
+        .jposta-employee-root-dark { color-scheme: dark; }
+        .jposta-employee-root-dark .jposta-backdrop-grid { background-image: linear-gradient(rgba(76,141,255,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(76,141,255,0.055) 1px, transparent 1px); opacity: 0.34; }
+        .jposta-employee-root-dark .jposta-glow-one { background: rgba(76,141,255,0.18); filter: blur(74px); }
+        .jposta-employee-root-dark .jposta-glow-two { background: rgba(56,189,248,0.10); filter: blur(82px); }
+        .jposta-employee-dark { --jp-bg: #07111f; --jp-surface: rgba(12,22,40,0.72); --jp-surface-strong: rgba(16,29,51,0.82); --jp-hover: rgba(21,37,68,0.82); --jp-selected: rgba(29,55,104,0.78); --jp-accent: #4c8dff; --jp-border: rgba(255,255,255,0.08); --jp-border-strong: rgba(148,185,255,0.26); --jp-text: rgba(255,255,255,0.95); --jp-secondary: rgba(210,220,245,0.82); --jp-muted: rgba(165,180,205,0.68); --jp-placeholder: rgba(145,160,190,0.55); --jp-glow: rgba(76,141,255,0.18); color: var(--jp-text); }
+        .jposta-employee-dark :where(aside, main > section, header > div, .jposta-glass-panel) { background: linear-gradient(145deg, rgba(16,29,51,0.76), rgba(8,18,34,0.58)) !important; border-color: var(--jp-border) !important; box-shadow: inset 0 1px 0 rgba(255,255,255,0.075), inset 0 -1px 0 rgba(76,141,255,0.04), 0 28px 90px rgba(0,0,0,0.34), 0 0 54px rgba(76,141,255,0.065) !important; backdrop-filter: blur(26px) saturate(145%); }
+        .jposta-employee-dark :where(aside, main > section) { outline: 1px solid rgba(76,141,255,0.10); outline-offset: -1px; }
         .jposta-employee-dark :where(h1,h2,h3,p,span,time,button,label,input,textarea,select) { color: inherit; }
-        .jposta-employee-dark :where(.text-blue-950,.text-blue-900,.text-blue-800,.text-slate-700,.text-slate-600,.text-slate-500) { color: #dbeafe !important; }
-        .jposta-employee-dark :where(input,textarea,select) { background-color: rgba(15,23,42,0.36) !important; color: #eaf2ff !important; }
-        .jposta-employee-dark .jposta-email-preview { color: #f8fbff; }
+        .jposta-employee-dark :where(.text-blue-950,.text-blue-900,.text-blue-800,.text-slate-700) { color: var(--jp-text) !important; }
+        .jposta-employee-dark :where(.text-slate-600,.text-slate-500,.text-slate-400) { color: var(--jp-muted) !important; }
+        .jposta-employee-dark :where(.text-blue-700,.text-blue-600) { color: #78a8ff !important; }
+        .jposta-employee-dark :where([class*="border-white/"],[class*="border-blue-100"],.border-blue-200) { border-color: var(--jp-border) !important; }
+        .jposta-employee-dark :where([class*="bg-white/"]) { background-color: var(--jp-surface) !important; }
+        .jposta-employee-dark :where(.bg-blue-50,[class*="bg-blue-50/"],.bg-blue-100,[class*="bg-blue-100/"]) { background-color: rgba(29,55,104,0.42) !important; }
+        .jposta-employee-dark :where(input,textarea,select) { background-color: rgba(7,17,31,0.42) !important; color: var(--jp-text) !important; border-color: var(--jp-border) !important; caret-color: var(--jp-accent); }
+        .jposta-employee-dark :where(input,textarea)::placeholder { color: var(--jp-placeholder) !important; }
+        .jposta-employee-dark :where(button,a) { transition-duration: 180ms; }
+        .jposta-employee-dark :where(button:hover:not(:disabled),a:hover) { background-color: var(--jp-hover) !important; box-shadow: 0 10px 34px rgba(76,141,255,0.10); }
+        .jposta-employee-dark nav button[class*="bg-blue-100"], .jposta-employee-dark .jposta-message-row[class*="bg-blue-50"] { background: linear-gradient(135deg, rgba(29,55,104,0.82), rgba(30,64,175,0.38)) !important; border-color: rgba(76,141,255,0.62) !important; box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 0 0 1px rgba(76,141,255,0.18), 0 16px 48px rgba(76,141,255,0.16) !important; color: #fff !important; }
+        .jposta-employee-dark .jposta-message-row { border-color: rgba(255,255,255,0.07) !important; }
+        .jposta-employee-dark .jposta-message-row:hover { background: rgba(21,37,68,0.56) !important; }
+        .jposta-employee-dark .jposta-message-row :where(.bg-blue-500) { background-color: #4c8dff !important; box-shadow: 0 0 16px rgba(76,141,255,0.65); }
+        .jposta-employee-dark .jposta-email-preview { color: rgba(236,244,255,0.92); background: linear-gradient(145deg, rgba(16,29,51,0.72), rgba(7,17,31,0.52)); border: 1px solid rgba(255,255,255,0.08); border-radius: 1.1rem; padding: 1.25rem; box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 18px 60px rgba(0,0,0,0.22); line-height: 1.65; }
+        .jposta-employee-dark .jposta-email-preview :where(p,li,td,div) { color: inherit; }
+        .jposta-employee-dark .jposta-email-preview :where(a) { color: #8bb5ff; }
+        .jposta-employee-dark ::-webkit-scrollbar { width: 9px; height: 9px; }
+        .jposta-employee-dark ::-webkit-scrollbar-track { background: transparent; }
+        .jposta-employee-dark ::-webkit-scrollbar-thumb { background: rgba(76,141,255,0.28); border: 2px solid transparent; border-radius: 999px; background-clip: padding-box; }
+        .jposta-employee-dark ::-webkit-scrollbar-thumb:hover { background: rgba(76,141,255,0.44); border: 2px solid transparent; background-clip: padding-box; }
+        .jposta-employee-dark button:focus-visible, .jposta-employee-dark input:focus-visible, .jposta-employee-dark select:focus-visible, .jposta-employee-dark textarea:focus-visible { outline: 2px solid rgba(76,141,255,0.72); outline-offset: 2px; }
         .jposta-density-compact .jposta-message-row { padding-top: 0.375rem !important; padding-bottom: 0.375rem !important; gap: 0.625rem !important; }
         .jposta-density-compact .jposta-message-row :where(.h-7.w-7) { height: 1.5rem !important; width: 1.5rem !important; }
         .jposta-density-compact nav button { min-height: 0; }
 
       `}</style>
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.42)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.34)_1px,transparent_1px)] bg-[size:44px_44px] opacity-50" />
-      <div className="pointer-events-none fixed left-[12%] top-[14%] h-72 w-72 rounded-full bg-sky-200/45 blur-3xl" />
-      <div className="pointer-events-none fixed bottom-[8%] right-[18%] h-80 w-80 rounded-full bg-blue-100/70 blur-3xl" />
+      <div className="jposta-backdrop-grid pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.42)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.34)_1px,transparent_1px)] bg-[size:44px_44px] opacity-50" />
+      <div className="jposta-glow-one pointer-events-none fixed left-[12%] top-[14%] h-72 w-72 rounded-full bg-sky-200/45 blur-3xl" />
+      <div className="jposta-glow-two pointer-events-none fixed bottom-[8%] right-[18%] h-80 w-80 rounded-full bg-blue-100/70 blur-3xl" />
       <div className={`jposta-employee-shell relative z-10 flex h-dvh min-h-0 flex-col overflow-hidden p-2 transition-colors lg:p-2.5 ${compact ? "jposta-density-compact gap-1.5" : "jposta-density-comfortable gap-2"} ${effectiveTheme === "dark" ? "jposta-employee-dark" : "jposta-employee-light"}`}>
         <header className="relative z-30 grid gap-2 lg:grid-cols-[15rem_minmax(0,40rem)_auto] xl:grid-cols-[15.5rem_minmax(32rem,40rem)_auto]">
           <div className="hidden items-center gap-2 rounded-[1rem] border border-white/70 bg-white/42 px-3 py-2 shadow-[0_18px_60px_rgba(37,99,235,0.12)] backdrop-blur-2xl lg:flex"><LogoMark /><div className="min-w-0"><p className="truncate text-sm text-slate-500">Mailbox</p><p className="truncate text-base font-semibold text-blue-950">{workspace}</p></div></div>
