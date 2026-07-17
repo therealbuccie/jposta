@@ -394,6 +394,59 @@ export function EmployeeWorkspaceClient() {
         .jposta-employee-dark ::-webkit-scrollbar-thumb { background: rgba(76,141,255,0.28); border: 2px solid transparent; border-radius: 999px; background-clip: padding-box; }
         .jposta-employee-dark ::-webkit-scrollbar-thumb:hover { background: rgba(76,141,255,0.44); border: 2px solid transparent; background-clip: padding-box; }
         .jposta-employee-dark button:focus-visible, .jposta-employee-dark input:focus-visible, .jposta-employee-dark select:focus-visible, .jposta-employee-dark textarea:focus-visible { outline: 2px solid rgba(76,141,255,0.72); outline-offset: 2px; }
+        .jposta-compose-backdrop { background: rgba(214,229,250,0.62); backdrop-filter: blur(28px) saturate(130%); }
+        .jposta-employee-dark .jposta-compose-backdrop { background: rgba(2,8,18,0.70); }
+        .jposta-compose-window {
+          --compose-shell: rgba(246,249,255,0.94);
+          --compose-editor: rgba(255,255,255,0.97);
+          --compose-toolbar: rgba(243,247,255,0.96);
+          --compose-field: rgba(255,255,255,0.94);
+          --compose-border: rgba(73,110,180,0.22);
+          --compose-text: #10213f;
+          --compose-text-secondary: #5f708d;
+          --compose-placeholder: #8b9ab3;
+          --compose-button: rgba(255,255,255,0.82);
+          --compose-button-hover: rgba(255,255,255,0.98);
+          --compose-accent: #356dff;
+          --compose-shadow: 0 34px 120px rgba(30,64,175,0.30), 0 14px 38px rgba(15,46,99,0.12);
+          color: var(--compose-text);
+          background: var(--compose-shell) !important;
+          border-color: var(--compose-border) !important;
+          box-shadow: var(--compose-shadow) !important;
+        }
+        .jposta-employee-dark .jposta-compose-window {
+          --compose-shell: rgba(8,18,34,0.94);
+          --compose-editor: rgba(13,27,48,0.96);
+          --compose-toolbar: rgba(18,35,61,0.96);
+          --compose-field: rgba(13,27,48,0.94);
+          --compose-border: rgba(125,160,225,0.18);
+          --compose-text: rgba(245,248,255,0.96);
+          --compose-text-secondary: rgba(193,207,232,0.80);
+          --compose-placeholder: rgba(150,169,201,0.65);
+          --compose-button: rgba(22,39,67,0.90);
+          --compose-button-hover: rgba(30,53,88,0.98);
+          --compose-accent: #4c8dff;
+          --compose-shadow: 0 34px 120px rgba(0,0,0,0.55), 0 0 70px rgba(76,141,255,0.10);
+        }
+        .jposta-compose-window :where(h2,p,span,label,input,textarea,select,button) { color: var(--compose-text); }
+        .jposta-compose-window :where(input,textarea,select) { background: transparent !important; color: var(--compose-text) !important; caret-color: var(--compose-accent); }
+        .jposta-compose-window :where(input,textarea)::placeholder { color: var(--compose-placeholder) !important; }
+        .jposta-compose-icon { background: linear-gradient(135deg,#2f80ff,#7c3cff); color: white !important; box-shadow: 0 14px 34px rgba(76,112,255,0.32); }
+        .jposta-compose-control, .jposta-compose-chip, .jposta-compose-secondary-button { background: var(--compose-button) !important; border-color: var(--compose-border) !important; color: var(--compose-text) !important; }
+        .jposta-compose-control:hover, .jposta-compose-chip:hover, .jposta-compose-secondary-button:hover { background: var(--compose-button-hover) !important; }
+        .jposta-compose-subtle { color: var(--compose-text-secondary) !important; }
+        .jposta-compose-panel { background: var(--compose-editor) !important; border-color: var(--compose-border) !important; box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 22px 72px rgba(18,54,108,0.14); }
+        .jposta-employee-dark .jposta-compose-panel { box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 22px 72px rgba(0,0,0,0.34); }
+        .jposta-compose-row { border-color: var(--compose-border) !important; }
+        .jposta-compose-label { background: var(--compose-field) !important; border-color: var(--compose-border) !important; color: var(--compose-text) !important; }
+        .jposta-compose-toolbar { background: var(--compose-toolbar) !important; border-color: var(--compose-border) !important; color: var(--compose-text) !important; }
+        .jposta-compose-toolbar :where(select,button) { background: var(--compose-button) !important; border-color: var(--compose-border) !important; color: var(--compose-text) !important; }
+        .jposta-compose-editor { background: var(--compose-editor) !important; color: var(--compose-text) !important; }
+        .jposta-compose-utility { background: var(--compose-toolbar) !important; border-color: var(--compose-border) !important; }
+        .jposta-compose-send { background: linear-gradient(135deg,#2584ff 0%,#4e5dff 54%,#9c3df4 100%); color: white !important; box-shadow: 0 16px 34px rgba(69,93,255,0.34); }
+        .jposta-compose-send:hover { transform: translateY(-1px); box-shadow: 0 20px 42px rgba(69,93,255,0.42); }
+        .jposta-compose-quote { border-color: var(--compose-border) !important; color: var(--compose-text-secondary) !important; }
+        .jposta-compose-ai { opacity: 0.82; }
         .jposta-density-compact .jposta-message-row { padding-top: 0.375rem !important; padding-bottom: 0.375rem !important; gap: 0.625rem !important; }
         .jposta-density-compact .jposta-message-row :where(.h-7.w-7) { height: 1.5rem !important; width: 1.5rem !important; }
         .jposta-density-compact nav button { min-height: 0; }
@@ -691,17 +744,17 @@ function ComposeWindow({ compose, mailbox, onChange, onClose, onSaveDraft, onSub
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-sky-100/38 p-2 backdrop-blur-2xl sm:p-5">
+    <div className="jposta-compose-backdrop fixed inset-0 z-50 flex items-center justify-center overflow-hidden p-2 sm:p-5">
       <div className="pointer-events-none absolute left-[12%] top-[8%] h-64 w-64 rounded-full bg-blue-300/35 blur-3xl" />
       <div className="pointer-events-none absolute bottom-[10%] right-[14%] h-72 w-72 rounded-full bg-indigo-200/45 blur-3xl" />
-      <form className="relative flex h-dvh w-full max-w-[76rem] flex-col overflow-hidden border border-white/75 bg-white/88 shadow-[0_34px_120px_rgba(30,64,175,0.28)] backdrop-blur-2xl sm:h-[85dvh] sm:rounded-[2rem]" onSubmit={onSubmit}>
+      <form className="jposta-compose-window relative flex h-dvh w-full max-w-[68.75rem] flex-col overflow-hidden border backdrop-blur-2xl sm:h-[calc(100dvh-48px)] sm:max-h-[46rem] sm:rounded-[1.65rem]" onSubmit={onSubmit}>
         <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-white/90" />
-        <header className="flex shrink-0 items-start justify-between gap-4 px-4 py-4 sm:px-7 sm:py-6">
-          <div className="flex min-w-0 items-start gap-4">
-            <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[1rem] border border-white/80 bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-[0_18px_38px_rgba(59,130,246,0.32)]"><MailPlus className="h-[18px] w-[18px]" aria-hidden="true" /></span>
+        <header className="flex shrink-0 items-start justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="jposta-compose-icon inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[0.95rem] border border-white/70"><MailPlus className="h-[18px] w-[18px]" aria-hidden="true" /></span>
             <div className="min-w-0">
-              <h2 className="truncate text-[1.35rem] font-semibold tracking-[-0.01em] text-blue-950 sm:text-[1.85rem]">{composeTitle(compose.mode)}</h2>
-              <p className="mt-1 truncate text-sm text-slate-600">From: <span className="font-medium text-blue-950">{mailbox || "Mailbox"}</span></p>
+              <h2 className="truncate text-[22px] font-semibold tracking-[-0.01em]">{composeTitle(compose.mode)}</h2>
+              <p className="jposta-compose-subtle mt-0.5 truncate text-[13px]">From: <span className="font-medium">{mailbox || "Mailbox"}</span></p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -710,37 +763,37 @@ function ComposeWindow({ compose, mailbox, onChange, onClose, onSaveDraft, onSub
             <ComposeIconButton label="Close" onClick={onClose}><X className="h-4 w-4" aria-hidden="true" /></ComposeIconButton>
           </div>
         </header>
-        <div className="flex min-h-0 flex-1 gap-4 px-3 pb-3 sm:px-6 sm:pb-6">
-          <aside className="hidden w-12 shrink-0 flex-col items-center gap-3 rounded-[1.35rem] border border-white/70 bg-white/46 p-2 shadow-inner backdrop-blur-xl md:flex">
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 text-white shadow-lg"><Sparkles className="h-4 w-4" aria-hidden="true" /></span>
+        <div className="flex min-h-0 flex-1 gap-3 px-3 pb-3 sm:px-5 sm:pb-4">
+          <aside className="jposta-compose-control hidden w-10 shrink-0 flex-col items-center gap-2 rounded-[1.1rem] border p-1.5 shadow-inner backdrop-blur-xl md:flex">
+            <span className="jposta-compose-icon inline-flex h-8 w-8 items-center justify-center rounded-xl"><Sparkles className="h-4 w-4" aria-hidden="true" /></span>
             <ComposeRailButton label="Attach"><Paperclip className="h-4 w-4" aria-hidden="true" /></ComposeRailButton>
             <ComposeRailButton label="Link"><Link className="h-4 w-4" aria-hidden="true" /></ComposeRailButton>
             <ComposeRailButton label="Emoji"><Smile className="h-4 w-4" aria-hidden="true" /></ComposeRailButton>
             <ComposeRailButton label="Text"><span className="text-sm font-semibold">T</span></ComposeRailButton>
           </aside>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.45rem] border border-blue-100/80 bg-white/72 shadow-[inset_0_1px_0_rgba(255,255,255,0.72),0_22px_70px_rgba(37,99,235,0.14)] backdrop-blur-xl">
-            <div className="shrink-0 divide-y divide-blue-100/80">
+          <div className="jposta-compose-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[1.25rem] border backdrop-blur-xl">
+            <div className="jposta-compose-row shrink-0 divide-y">
               <ComposeRecipientRow chips={toRecipients} id="compose-to" label="To" onRemove={(value) => removeRecipient("to", value)} onValueChange={(value) => updateField("to", value)} placeholder="Add recipients..." required value={compose.to}>
-                <button className="rounded-full px-2 py-1 text-sm font-medium text-blue-700 transition hover:bg-blue-50" onClick={() => setShowCc(true)} type="button">Cc</button>
-                <button className="rounded-full px-2 py-1 text-sm font-medium text-blue-700 transition hover:bg-blue-50" onClick={() => setShowBcc(true)} type="button">Bcc</button>
+                <button className="rounded-full px-2 py-1 text-[13px] font-medium transition hover:bg-blue-50" onClick={() => setShowCc(true)} type="button">Cc</button>
+                <button className="rounded-full px-2 py-1 text-[13px] font-medium transition hover:bg-blue-50" onClick={() => setShowBcc(true)} type="button">Bcc</button>
               </ComposeRecipientRow>
               {showCc || compose.cc ? <ComposeRecipientRow chips={ccRecipients} id="compose-cc" label="Cc" onRemove={(value) => removeRecipient("cc", value)} onValueChange={(value) => updateField("cc", value)} placeholder="Add Cc recipients..." value={compose.cc} /> : null}
               {showBcc || compose.bcc ? <ComposeRecipientRow chips={bccRecipients} id="compose-bcc" label="Bcc" onRemove={(value) => removeRecipient("bcc", value)} onValueChange={(value) => updateField("bcc", value)} placeholder="Add Bcc recipients..." value={compose.bcc} /> : null}
-              <div className="flex items-center gap-3 px-4 py-3 sm:px-6">
-                <span className="inline-flex h-9 min-w-24 items-center gap-2 rounded-2xl border border-blue-100 bg-white/74 px-3 text-sm font-semibold text-blue-950 shadow-sm"><Mail className="h-4 w-4 text-blue-700" aria-hidden="true" />Subject</span>
-                <input aria-label="Subject" className="h-10 min-w-0 flex-1 bg-transparent text-[15px] text-blue-950 outline-none placeholder:text-slate-400" onChange={(event) => updateField("subject", event.target.value)} placeholder="Add subject..." value={compose.subject} />
+              <div className="jposta-compose-row flex items-center gap-3 px-4 py-2.5 sm:px-5">
+                <span className="jposta-compose-label inline-flex h-8 min-w-20 items-center gap-2 rounded-xl border px-3 text-xs font-semibold shadow-sm"><Mail className="h-4 w-4 text-blue-700" aria-hidden="true" />Subject</span>
+                <input aria-label="Subject" className="h-8 min-w-0 flex-1 bg-transparent text-[14px] outline-none" onChange={(event) => updateField("subject", event.target.value)} placeholder="Add subject..." value={compose.subject} />
               </div>
             </div>
-            <div className="shrink-0 px-4 pt-4 sm:px-6">
-              <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-                {["Improve", "Rewrite", "Professional", "Friendly", "Translate", "Summarize"].map((label) => <button className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-blue-100 bg-white/74 px-3 text-xs font-semibold text-blue-800 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white" key={label} type="button"><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{label}</button>)}
+            <div className="shrink-0 px-4 pt-3 sm:px-5">
+              <div className="jposta-compose-ai mb-2 flex gap-1.5 overflow-x-auto pb-1">
+                {["Improve", "Rewrite", "Professional", "Friendly", "Translate", "Summarize"].map((label) => <button className="jposta-compose-chip inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-medium shadow-sm transition duration-200 hover:-translate-y-0.5" key={label} type="button"><Sparkles className="h-3.5 w-3.5" aria-hidden="true" />{label}</button>)}
               </div>
-              <div className="flex items-center gap-2 overflow-x-auto rounded-[1.25rem] border border-blue-100/80 bg-white/68 px-3 py-2 text-blue-950 shadow-sm transition duration-200 focus-within:bg-white/82">
+              <div className="jposta-compose-toolbar flex items-center gap-1.5 overflow-x-auto rounded-[1rem] border px-2.5 py-1.5 text-[13px] shadow-sm transition duration-200">
                 <ComposeToolbarButton label="Undo"><Undo2 className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
                 <ComposeToolbarButton label="Redo"><Redo2 className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
                 <span className="mx-1 h-6 w-px shrink-0 bg-blue-100" />
-                <select aria-label="Font" className="h-9 rounded-xl border border-blue-100 bg-white/82 px-3 text-sm outline-none"><option>Inter</option><option>Serif</option><option>Mono</option></select>
-                <select aria-label="Font size" className="h-9 rounded-xl border border-blue-100 bg-white/82 px-2 text-sm outline-none"><option>14</option><option>15</option><option>16</option><option>18</option></select>
+                <select aria-label="Font" className="h-8 rounded-lg border px-2.5 text-[13px] outline-none"><option>Inter</option><option>Serif</option><option>Mono</option></select>
+                <select aria-label="Font size" className="h-8 rounded-lg border px-2 text-[13px] outline-none"><option>14</option><option>15</option><option>16</option><option>18</option></select>
                 <span className="mx-1 h-6 w-px shrink-0 bg-blue-100" />
                 <ComposeToolbarButton label="Bold"><Bold className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
                 <ComposeToolbarButton label="Italic"><Italic className="h-4 w-4" aria-hidden="true" /></ComposeToolbarButton>
@@ -755,28 +808,28 @@ function ComposeWindow({ compose, mailbox, onChange, onClose, onSaveDraft, onSub
               </div>
             </div>
             <label className="sr-only" htmlFor="compose-body">Message body</label>
-            <textarea className="min-h-0 flex-1 resize-none bg-transparent px-5 py-5 text-[15px] leading-7 text-blue-950 outline-none placeholder:text-slate-400 sm:px-7" id="compose-body" onChange={(event) => updateField("body", event.target.value)} placeholder="Write something amazing..." value={compose.body} />
-            {compose.attachments.length ? <div className="grid shrink-0 gap-2 border-t border-blue-100/70 px-4 py-3 sm:px-6">{compose.attachments.map((file) => <div className="flex items-center justify-between gap-3 rounded-2xl border border-blue-100 bg-white/76 px-3 py-2 text-xs text-blue-950 shadow-sm" key={`${file.name}-${file.size}`}><span className="min-w-0 truncate"><Paperclip className="mr-2 inline h-3.5 w-3.5 text-blue-700" aria-hidden="true" />{file.name} / {formatBytes(file.size)}</span><button aria-label={`Remove ${file.name}`} className="rounded-full px-2 py-1 font-medium text-blue-700 transition hover:bg-blue-50" onClick={() => removeAttachment(file)} type="button">Remove</button></div>)}</div> : null}
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-blue-100/80 px-4 py-3 sm:px-6">
-              <div className="flex flex-wrap items-center gap-2 text-sm text-blue-950">
-                <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-full px-2.5 font-medium transition hover:bg-white/70"><Paperclip className="h-4 w-4 text-blue-700" aria-hidden="true" />Attach<input aria-label="Attach files" className="sr-only" multiple onChange={(event) => { attachFiles(event.target.files); event.target.value = ""; }} type="file" /></label>
+            <textarea className="jposta-compose-editor min-h-0 flex-1 resize-none px-5 py-4 text-[14px] leading-6 outline-none sm:px-6" id="compose-body" onChange={(event) => updateField("body", event.target.value)} placeholder="Write something amazing..." value={compose.body} />
+            {compose.attachments.length ? <div className="jposta-compose-row grid shrink-0 gap-2 border-t px-4 py-2.5 sm:px-5">{compose.attachments.map((file) => <div className="jposta-compose-control flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-xs shadow-sm" key={`${file.name}-${file.size}`}><span className="min-w-0 truncate"><Paperclip className="mr-2 inline h-3.5 w-3.5 text-blue-700" aria-hidden="true" />{file.name} / {formatBytes(file.size)}</span><button aria-label={`Remove ${file.name}`} className="rounded-full px-2 py-1 font-medium text-blue-700 transition hover:bg-blue-50" onClick={() => removeAttachment(file)} type="button">Remove</button></div>)}</div> : null}
+            <div className="jposta-compose-utility flex shrink-0 flex-wrap items-center justify-between gap-3 border-t px-4 py-2.5 sm:px-5">
+              <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
+                <label className="jposta-compose-secondary-button inline-flex h-8 cursor-pointer items-center gap-2 rounded-full px-2.5 font-medium transition"><Paperclip className="h-4 w-4 text-blue-700" aria-hidden="true" />Attach<input aria-label="Attach files" className="sr-only" multiple onChange={(event) => { attachFiles(event.target.files); event.target.value = ""; }} type="file" /></label>
                 <ComposeFooterButton label="Drive"><Cloud className="h-4 w-4" aria-hidden="true" />Drive</ComposeFooterButton>
                 <ComposeFooterButton label="Image"><Image className="h-4 w-4" aria-hidden="true" />Image</ComposeFooterButton>
                 <ComposeFooterButton label="Calendar"><Calendar className="h-4 w-4" aria-hidden="true" />Calendar</ComposeFooterButton>
                 <ComposeFooterButton label="Contacts"><Users className="h-4 w-4" aria-hidden="true" />Contacts</ComposeFooterButton>
                 <ComposeFooterButton label="Voice note"><Mic className="h-4 w-4" aria-hidden="true" />Voice</ComposeFooterButton>
               </div>
-              <div className="flex items-center gap-3 text-xs text-slate-500"><span>{draftStatus}</span><span>{characterCount.toLocaleString()} chars</span></div>
+              <div className="jposta-compose-subtle flex items-center gap-2 text-xs"><span>{draftStatus}</span><span>{characterCount.toLocaleString()} chars</span></div>
             </div>
           </div>
         </div>
-        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 pb-4 sm:px-7 sm:pb-6">
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 pb-4 sm:px-6">
           <div className="flex flex-wrap items-center gap-3">
-            <button className="inline-flex h-12 items-center overflow-hidden rounded-2xl bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 text-sm font-semibold text-white shadow-[0_18px_42px_rgba(59,130,246,0.34)] transition duration-200 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70" disabled={sending} type="submit"><span className="inline-flex h-full items-center gap-2 px-5"><Send className="h-4 w-4" aria-hidden="true" />{sending ? "Sending..." : "Send"}</span><span className="flex h-full items-center border-l border-white/24 px-3"><ChevronDown className="h-4 w-4" aria-hidden="true" /></span></button>
-            <button className="inline-flex h-12 items-center gap-2 rounded-2xl border border-white/70 bg-white/70 px-4 text-sm font-medium text-blue-950 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white" onClick={onSaveDraft} type="button"><Save className="h-4 w-4 text-blue-700" aria-hidden="true" />Save now</button>
-            <button className="inline-flex h-12 items-center gap-2 rounded-2xl border border-white/70 bg-white/70 px-4 text-sm font-medium text-blue-950 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white" type="button"><Calendar className="h-4 w-4 text-blue-700" aria-hidden="true" />Schedule</button>
+            <button className="jposta-compose-send inline-flex h-10 items-center overflow-hidden rounded-xl text-[13px] font-semibold transition duration-200 focus:outline-none focus:ring-2 focus:ring-blue-300 disabled:cursor-not-allowed disabled:opacity-70" disabled={sending} type="submit"><span className="inline-flex h-full items-center gap-2 px-4"><Send className="h-4 w-4" aria-hidden="true" />{sending ? "Sending..." : "Send"}</span><span className="flex h-full items-center border-l border-white/24 px-2.5"><ChevronDown className="h-4 w-4" aria-hidden="true" /></span></button>
+            <button className="jposta-compose-secondary-button inline-flex h-10 w-10 items-center justify-center rounded-xl border text-[13px] font-medium shadow-sm transition duration-200 hover:-translate-y-0.5" onClick={onSaveDraft} title="Save draft" type="button"><Save className="h-4 w-4" aria-hidden="true" /></button>
+            <button className="jposta-compose-secondary-button inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-[13px] font-medium shadow-sm transition duration-200 hover:-translate-y-0.5" type="button"><Calendar className="h-4 w-4" aria-hidden="true" />Schedule</button>
           </div>
-          <button className="inline-flex h-12 items-center rounded-2xl border border-white/70 bg-white/62 px-5 text-sm font-medium text-blue-950 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white" onClick={onClose} type="button">Discard</button>
+          <button className="jposta-compose-secondary-button inline-flex h-10 items-center rounded-xl border px-4 text-[13px] font-medium shadow-sm transition duration-200 hover:-translate-y-0.5" onClick={onClose} type="button">Discard</button>
         </footer>
       </form>
     </div>
@@ -784,13 +837,13 @@ function ComposeWindow({ compose, mailbox, onChange, onClose, onSaveDraft, onSub
 }
 
 function ComposeRecipientRow({ children, chips, id, label, onRemove, onValueChange, placeholder, required, value }: { children?: React.ReactNode; chips: string[]; id: string; label: string; onRemove: (value: string) => void; onValueChange: (value: string) => void; placeholder: string; required?: boolean; value: string }) {
-  return <div className="flex min-h-16 items-center gap-3 px-4 py-3 sm:px-6"><label className="inline-flex h-10 min-w-20 items-center justify-center rounded-2xl border border-blue-100 bg-white/76 px-3 text-sm font-semibold text-blue-950 shadow-sm" htmlFor={id}>{label}</label><div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{chips.map((chip) => <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-blue-100 bg-blue-50/80 px-3 py-1.5 text-sm font-medium text-blue-950" key={chip}>{chip}<button aria-label={`Remove ${chip}`} className="text-blue-600 hover:text-blue-900" onClick={() => onRemove(chip)} type="button">x</button></span>)}<input className="h-9 min-w-[11rem] flex-1 bg-transparent text-[15px] text-blue-950 outline-none placeholder:text-slate-400" id={id} onChange={(event) => onValueChange(event.target.value)} placeholder={chips.length ? "Add another..." : placeholder} required={required && !chips.length} value={value} /></div>{children ? <div className="flex shrink-0 items-center gap-1">{children}</div> : null}</div>;
+  return <div className="jposta-compose-row flex min-h-12 items-center gap-3 px-4 py-2 sm:px-5"><label className="jposta-compose-label inline-flex h-8 min-w-16 items-center justify-center rounded-xl border px-3 text-xs font-semibold shadow-sm" htmlFor={id}>{label}</label><div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{chips.map((chip) => <span className="jposta-compose-chip inline-flex max-w-full items-center gap-2 rounded-full border px-2.5 py-1 text-[13px] font-medium" key={chip}>{chip}<button aria-label={`Remove ${chip}`} className="opacity-70 transition hover:opacity-100" onClick={() => onRemove(chip)} type="button">x</button></span>)}<input className="h-8 min-w-[10rem] flex-1 bg-transparent text-[14px] outline-none" id={id} onChange={(event) => onValueChange(event.target.value)} placeholder={chips.length ? "Add another..." : placeholder} required={required && !chips.length} value={value} /></div>{children ? <div className="flex shrink-0 items-center gap-1">{children}</div> : null}</div>;
 }
 
-function ComposeIconButton({ children, label, onClick }: { children: React.ReactNode; label: string; onClick?: () => void }) { return <button aria-label={label} className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/70 bg-white/58 text-blue-950 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" onClick={onClick} type="button">{children}</button>; }
-function ComposeRailButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="inline-flex h-9 w-9 items-center justify-center rounded-2xl text-blue-950 transition duration-200 hover:bg-white/70" type="button">{children}</button>; }
-function ComposeToolbarButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-xl text-blue-950 transition duration-200 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-200" type="button">{children}</button>; }
-function ComposeFooterButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="inline-flex h-9 items-center gap-2 rounded-full px-2.5 font-medium transition duration-200 hover:bg-white/70" type="button">{children}</button>; }
+function ComposeIconButton({ children, label, onClick }: { children: React.ReactNode; label: string; onClick?: () => void }) { return <button aria-label={label} className="jposta-compose-control inline-flex h-8 w-8 items-center justify-center rounded-xl border shadow-sm transition duration-200 hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-300" onClick={onClick} type="button">{children}</button>; }
+function ComposeRailButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="jposta-compose-control inline-flex h-8 w-8 items-center justify-center rounded-xl transition duration-200" type="button">{children}</button>; }
+function ComposeToolbarButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition duration-200 focus:outline-none focus:ring-2 focus:ring-blue-300" type="button">{children}</button>; }
+function ComposeFooterButton({ children, label }: { children: React.ReactNode; label: string }) { return <button aria-label={label} className="jposta-compose-secondary-button inline-flex h-8 items-center gap-2 rounded-full px-2.5 text-[13px] font-medium transition duration-200" type="button">{children}</button>; }
 function recipientChips(value: string) { return value.split(/[;,]/).map((item) => item.trim()).filter(Boolean); }
 function makeFolderNavigation(folders: WebmailFolder[]): FolderNavItem[] {
   return primaryFolderConfig.flatMap((config) => {
